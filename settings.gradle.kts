@@ -17,13 +17,6 @@ dependencyResolutionManagement {
     }
 }
 
-// versionCatalogs 必须单独声明，不能放在 dependencyResolutionManagement 内部
-versionCatalogs {
-    libs {
-        from(files("gradle/libs.versions.toml"))
-    }
-}
-
 rootProject.name = "MQTTPush"
 include(":core")
 include(":ui-compose")

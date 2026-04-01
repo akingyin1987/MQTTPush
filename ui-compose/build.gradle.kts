@@ -46,8 +46,7 @@ dependencies {
 
     implementation(libs.kotlinx.coroutines.android)
 
-    debugImplementation(libs.compose.ui.tooling.preview)
-    debugImplementation("androidx.compose.ui:ui-test-manifest")
+    debugImplementation(libs.compose.ui.tooling)
+    debugImplementation(libs.compose.ui.test.manifest)
 }
-
 

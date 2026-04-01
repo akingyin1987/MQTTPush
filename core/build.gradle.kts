@@ -1,9 +1,8 @@
 plugins {
-    alias(libs.plugins.android.library)
-    alias(libs.plugins.kotlin.android)
-    // kotlin-parcelize 已由 kotlin-android 插件提供，直接 apply 即可
-    apply(plugin = "kotlin-parcelize")
-    alias(libs.plugins.ksp)
+    id("com.android.library")
+    id("org.jetbrains.kotlin.android")
+    id("com.google.devtools.ksp")
+
 }
 
 android {
@@ -37,22 +36,28 @@ android {
 }
 
 dependencies {
-    implementation(libs.androidx.core.ktx)
-    implementation(libs.androidx.lifecycle.runtime.ktx)
-    implementation(libs.androidx.lifecycle.viewmodel.ktx)
-    implementation(libs.androidx.lifecycle.livedata.ktx)
-    implementation(libs.androidx.activity.compose)
-    implementation(libs.androidx.fragment.ktx)
+    // AndroidX Core
+    implementation("androidx.core:core-ktx:1.12.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.7.0")
+    implementation("androidx.lifecycle:lifecycle-livedata-ktx:2.7.0")
+    implementation("androidx.activity:activity-compose:1.8.2")
+    implementation("androidx.fragment:fragment-ktx:1.6.2")
 
-    implementation(platform(libs.compose.bom))
+    // Compose BOM
+    implementation(platform("androidx.compose:compose-bom:2024.06.00"))
 
-    implementation(libs.kotlinx.coroutines.android)
+    // Coroutines
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0")
 
-    implementation(libs.hivemq.client)
+    // HiveMQ
+    implementation("com.hivemq:hivemq-mqtt-client:1.3.13")
 
-    implementation(libs.androidx.room.runtime)
-    implementation(libs.androidx.room.ktx)
-    ksp(libs.androidx.room.compiler)
+    // Room
+    implementation("androidx.room:room-runtime:2.6.1")
+    implementation("androidx.room:room-ktx:2.6.1")
+    ksp("androidx.room:room-compiler:2.6.1")
 
-    implementation(libs.gson)
+    // Gson
+    implementation("com.google.code.gson:gson:2.10.1")
 }

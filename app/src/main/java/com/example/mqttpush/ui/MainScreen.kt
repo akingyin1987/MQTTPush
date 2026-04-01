@@ -1,5 +1,6 @@
-﻿package com.example.mqttpush.ui
+package com.example.mqttpush.ui
 
+import androidx.compose.animation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -21,28 +22,42 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.push.core.model.BrokerConfig
 import com.push.core.model.ConnectionStatus
 import com.push.core.viewmodel.PushViewModel
-import com.push.ui.compose.screen.MessageListScreen
+import com.push.ui.compose.components.TopNotificationBar
+import com.push.ui.compose.screen.*
 
-/**
- * 涓荤晫闈紙绀轰緥 App锛? * 灞曠ず: 娑堟伅鍒楄〃 + 杩炴帴绠＄悊 + Top 5 婊氬姩閫氱煡
- */
-
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(viewModel: PushViewModel = viewModel()) {
+    val isLoggedIn by viewModel.isLoggedIn.collectAsState()
+    val currentSession by viewModel.currentSession.collectAsState()
+    val connectionStatus by viewModel.connectionStatus.collectAsState()
     val uiState by viewModel.messages.collectAsState()
     val unreadCount by viewModel.unreadCount.collectAsState()
-    val connectionStatus by viewModel.connectionStatus.collectAsState()
     val currentFilter by viewModel.currentFilter.collectAsState()
     var currentTab by remember { mutableIntStateOf(0) }
 
+    // 未登录 → 显示登录页
+    if (!isLoggedIn) {
+        LoginScreen(
+            viewModel = viewModel,
+            onLoginSuccess = { /* 登录成功自动跳转 */ }
+        )
+        return
+    }
+
+    // 已登录 → 主界面
     Scaffold(
         bottomBar = {
             NavigationBar {
-                listOf("娑堟伅", "杩炴帴", "璁㈤槄").forEachIndexed { index, title ->
+                listOf("消息", "连接", "订阅").forEachIndexed { index, title ->
                     NavigationBarItem(
                         icon = {
                             when (index) {
-                                0 -> Icon(Icons.Default.Inbox, null)
+                                0 -> BadgedBox(
+                                    badge = {
+                                        if (unreadCount > 0) Badge { Text("$unreadCount") }
+                                    }
+                                ) { Icon(Icons.Default.Inbox, null) }
                                 1 -> Icon(Icons.Default.Cable, null)
                                 else -> Icon(Icons.Default.Subscriptions, null)
                             }
@@ -73,11 +88,14 @@ fun MainScreen(viewModel: PushViewModel = viewModel()) {
                 )
                 1 -> ConnectionScreen(
                     connectionStatus = connectionStatus,
+                    currentSession = currentSession,
                     onConnect = viewModel::connect,
-                    onDisconnect = viewModel::disconnect
+                    onDisconnect = viewModel::disconnect,
+                    onLogout = { viewModel.logout() }
                 )
                 2 -> SubscriptionScreen(
                     subscriptions = viewModel.subscriptions,
+                    currentSession = currentSession,
                     onSubscribe = viewModel::subscribe,
                     onUnsubscribe = viewModel::unsubscribe
                 )
@@ -89,8 +107,10 @@ fun MainScreen(viewModel: PushViewModel = viewModel()) {
 @Composable
 fun ConnectionScreen(
     connectionStatus: ConnectionStatus,
+    currentSession: com.push.core.model.UserSession?,
     onConnect: (BrokerConfig) -> Unit,
-    onDisconnect: () -> Unit
+    onDisconnect: () -> Unit,
+    onLogout: () -> Unit
 ) {
     var host by remember { mutableStateOf("10.0.2.2") }
     var port by remember { mutableStateOf("1883") }
@@ -105,76 +125,76 @@ fun ConnectionScreen(
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text("杩炴帴绠＄悊", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Text("连接管理", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
 
+        // 当前会话卡片
+        currentSession?.let { session ->
+            SessionCard(
+                session = session,
+                onLogout = onLogout
+            )
+        }
+
+        // Broker 配置
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Broker 配置", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     OutlinedTextField(
                         value = host, onValueChange = { host = it },
-                        label = { Text("鏈嶅姟鍣?) }, modifier = Modifier.weight(2f), singleLine = true
+                        label = { Text("服务器") }, modifier = Modifier.weight(2f), singleLine = true
                     )
                     OutlinedTextField(
                         value = port, onValueChange = { port = it },
-                        label = { Text("绔彛") }, modifier = Modifier.weight(1f),
+                        label = { Text("端口") }, modifier = Modifier.weight(1f),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true
                     )
                 }
                 OutlinedTextField(value = clientId, onValueChange = { clientId = it },
                     label = { Text("Client ID") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 OutlinedTextField(value = username, onValueChange = { username = it },
-                    label = { Text("鐢ㄦ埛鍚嶏紙鍙€夛級") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                    label = { Text("用户名（可选）") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 OutlinedTextField(value = password, onValueChange = { password = it },
-                    label = { Text("瀵嗙爜锛堝彲閫夛級") },
-                    visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth(), singleLine = true)
+                    label = { Text("密码（可选）") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(), singleLine = true)
             }
         }
 
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (connectionStatus == ConnectionStatus.Connected) {
-                Button(
-                    onClick = onDisconnect,
-                    modifier = Modifier.weight(1f).height(52.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF5252)),
-                    shape = MaterialTheme.shapes.medium
-                ) {
-                    Icon(Icons.Default.LinkOff, null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("鏂紑", fontWeight = FontWeight.Bold)
-                }
-            } else {
-                Button(
-                    onClick = {
-                        onConnect(BrokerConfig(
-                            host = host.ifBlank { "127.0.0.1" },
-                            port = port.toIntOrNull() ?: 1883,
-                            clientId = clientId.ifBlank { "demo-${System.currentTimeMillis()}" },
-                            username = username.takeIf { it.isNotBlank() },
-                            password = password.takeIf { it.isNotBlank() }
-                        ))
-                    },
-                    modifier = Modifier.weight(1f).height(52.dp),
-                    enabled = connectionStatus != ConnectionStatus.Connecting,
-                    shape = MaterialTheme.shapes.medium
-                ) {
-                    if (connectionStatus == ConnectionStatus.Connecting) {
-                        CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
-                    } else {
-                        Icon(Icons.Default.Cable, null)
-                    }
-                    Spacer(Modifier.width(8.dp))
-                    Text(if (connectionStatus == ConnectionStatus.Connecting) "杩炴帴涓?.." else "杩炴帴", fontWeight = FontWeight.Bold)
-                }
+        // 连接/断开按钮
+        if (connectionStatus == ConnectionStatus.Connected) {
+            Button(
+                onClick = onDisconnect,
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF5252)),
+                shape = MaterialTheme.shapes.medium
+            ) {
+                Icon(Icons.Default.LinkOff, null)
+                Spacer(Modifier.width(8.dp))
+                Text("断开连接", fontWeight = FontWeight.Bold)
             }
-        }
-
-        if (connectionStatus is ConnectionStatus.Error) {
-            Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFFF5252).copy(alpha = 0.1f))) {
-                Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Error, null, tint = Color(0xFFFF5252))
-                    Spacer(Modifier.width(8.dp))
-                    Text((connectionStatus as ConnectionStatus.Error).message, color = Color(0xFFFF5252), fontSize = 13.sp)
+        } else {
+            Button(
+                onClick = {
+                    onConnect(BrokerConfig(
+                        host = host.ifBlank { "127.0.0.1" },
+                        port = port.toIntOrNull() ?: 1883,
+                        clientId = clientId.ifBlank { "demo-${System.currentTimeMillis()}" },
+                        username = username.takeIf { it.isNotBlank() },
+                        password = password.takeIf { it.isNotBlank() }
+                    ))
+                },
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                enabled = connectionStatus != ConnectionStatus.Connecting,
+                shape = MaterialTheme.shapes.medium
+            ) {
+                if (connectionStatus == ConnectionStatus.Connecting) {
+                    CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
+                } else {
+                    Icon(Icons.Default.Cable, null)
                 }
+                Spacer(Modifier.width(8.dp))
+                Text(if (connectionStatus == ConnectionStatus.Connecting) "连接中..." else "连接", fontWeight = FontWeight.Bold)
             }
         }
 
@@ -182,7 +202,7 @@ fun ConnectionScreen(
             Row(modifier = Modifier.padding(12.dp)) {
                 Icon(Icons.Default.Info, null, tint = Color(0xFF2196F3))
                 Spacer(Modifier.width(8.dp))
-                Text("妯℃嫙鍣ㄨ繛鎺ュ涓绘満鐢?10.0.2.2锛岀湡鏈虹敤鐢佃剳灞€鍩熺綉 IP銆?, fontSize = 12.sp, color = Color.Black.copy(alpha = 0.7f))
+                Text("模拟器连接宿主机用 10.0.2.2，真机用电脑局域网 IP。", fontSize = 12.sp, color = Color.Black.copy(alpha = 0.7f))
             }
         }
     }
@@ -191,24 +211,52 @@ fun ConnectionScreen(
 @Composable
 fun SubscriptionScreen(
     subscriptions: StateFlow<Set<String>>,
+    currentSession: com.push.core.model.UserSession?,
     onSubscribe: (String, Int) -> Unit,
     onUnsubscribe: (String) -> Unit
 ) {
     val subs by subscriptions.collectAsState()
-    var topic by remember { mutableStateOf("test/#") }
+    var topic by remember { mutableStateOf("") }
     var qos by remember { mutableIntStateOf(0) }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text("璁㈤槄绠＄悊", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Text("订阅管理", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
 
+        // 当前会话订阅主题
+        currentSession?.let { session ->
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                )
+            ) {
+                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Person, null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(6.dp))
+                        Text("${session.userId} 的专属主题", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                    }
+                    session.subscribedTopics.forEach { t ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.CheckCircle, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(13.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(t, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+        }
+
+        // 手动添加订阅
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("手动订阅", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                 OutlinedTextField(
                     value = topic, onValueChange = { topic = it },
-                    label = { Text("涓婚") }, placeholder = { Text("渚嬪: sensor/#") },
+                    label = { Text("主题") }, placeholder = { Text("例如: sensor/#") },
                     modifier = Modifier.fillMaxWidth(), singleLine = true
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -218,18 +266,19 @@ fun SubscriptionScreen(
                     }
                 }
                 Button(
-                    onClick = { onSubscribe(topic, qos) },
+                    onClick = { if (topic.isNotBlank()) { onSubscribe(topic, qos); topic = "" } },
                     modifier = Modifier.fillMaxWidth().height(46.dp)
                 ) {
                     Icon(Icons.Default.Add, null)
                     Spacer(Modifier.width(6.dp))
-                    Text("娣诲姞璁㈤槄")
+                    Text("添加订阅")
                 }
             }
         }
 
+        // 当前所有订阅
         if (subs.isNotEmpty()) {
-            Text("宸茶闃?(${subs.size})", style = MaterialTheme.typography.titleMedium)
+            Text("当前订阅 (${subs.size})", style = MaterialTheme.typography.titleMedium)
             subs.forEach { t ->
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -238,22 +287,13 @@ fun SubscriptionScreen(
                     Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.Label, null, tint = Color(0xFF2196F3), modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text(t, modifier = Modifier.weight(1f), fontFamily = FontFamily.Monospace)
+                        Text(t, modifier = Modifier.weight(1f), fontFamily = FontFamily.Monospace, fontSize = 12.sp)
                         IconButton(onClick = { onUnsubscribe(t) }) {
-                            Icon(Icons.Default.Close, "鍙栨秷", tint = Color(0xFFFF5252), modifier = Modifier.size(18.dp))
+                            Icon(Icons.Default.Close, "取消", tint = Color(0xFFFF5252), modifier = Modifier.size(18.dp))
                         }
                     }
-                }
-            }
-        } else {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Default.Subscriptions, null, Modifier.size(48.dp), tint = Color.Black.copy(alpha = 0.2f))
-                    Spacer(Modifier.height(8.dp))
-                    Text("鏆傛棤璁㈤槄", color = Color.Black.copy(alpha = 0.4f))
                 }
             }
         }
     }
 }
-
