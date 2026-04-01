@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  业务页面布局示例 - 通知条在 topBar 下方
+
+  使用方式：
+  1. 把 com.push.ui.xml.widget.PushNotificationBar 放在 topBar 下方
+  2. 用 app:layout_behavior 配合 CoordinatorLayout，或直接用 LinearLayout
+-->
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+
+    <!-- topBar -->
+    <com.google.android.material.appbar.MaterialToolbar
+        android:id="@+id/toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="?attr/actionBarSize"
+        android:background="?attr/colorSurface"
+        app:title="我的业务页面" />
+
+    <!-- 🚀 通知条（自动显示在 topBar 下方） -->
+    <com.push.ui.xml.widget.PushNotificationBar
+        android:id="@+id/notification_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:visibility="gone" />
+
+    <!-- 页面内容 -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/recycler_view"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+</LinearLayout>

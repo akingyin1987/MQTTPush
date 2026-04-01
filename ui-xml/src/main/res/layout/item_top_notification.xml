@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8"?>
+<com.google.android.material.card.MaterialCardView
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="52dp"
+    android:layout_marginHorizontal="16dp"
+    android:layout_marginVertical="8dp"
+    app:cardCornerRadius="12dp"
+    app:cardElevation="3dp"
+    app:cardBackgroundColor="?attr/colorPrimaryContainer">
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:paddingHorizontal="12dp">
+
+        <!-- 通知图标 -->
+        <ImageView
+            android:id="@+id/iv_icon"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:src="@drawable/ic_notification_dot"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            app:tint="?attr/colorOnPrimaryContainer" />
+
+        <!-- 标题 -->
+        <TextView
+            android:id="@+id/tv_notification_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="10dp"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textColor="?attr/colorOnPrimaryContainer"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            tools:text="新通知"
+            app:layout_constraintBottom_toTopOf="@id/tv_notification_content"
+            app:layout_constraintEnd_toStartOf="@id/tv_notification_time"
+            app:layout_constraintStart_toEndOf="@id/iv_icon"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintVertical_chainStyle="packed" />
+
+        <!-- 内容 -->
+        <TextView
+            android:id="@+id/tv_notification_content"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:alpha="0.7"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textColor="?attr/colorOnPrimaryContainer"
+            android:textSize="11sp"
+            tools:text="您有一条新消息..."
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toStartOf="@id/tv_notification_time"
+            app:layout_constraintStart_toStartOf="@id/tv_notification_title"
+            app:layout_constraintTop_toBottomOf="@id/tv_notification_title" />
+
+        <!-- 时间 -->
+        <TextView
+            android:id="@+id/tv_notification_time"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="8dp"
+            android:alpha="0.5"
+            android:textColor="?attr/colorOnPrimaryContainer"
+            android:textSize="10sp"
+            tools:text="14:35"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toStartOf="@id/btn_close_notification"
+            app:layout_constraintTop_toTopOf="parent" />
+
+        <!-- 关闭按钮 -->
+        <ImageView
+            android:id="@+id/btn_close_notification"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="关闭"
+            android:padding="4dp"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_close"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            app:tint="?attr/colorOnPrimaryContainer" />
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+</com.google.android.material.card.MaterialCardView>

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="push_channel_name">MQTT 推送</string>
+    <string name="push_channel_description">MQTT 推送通知通道</string>
+</resources>

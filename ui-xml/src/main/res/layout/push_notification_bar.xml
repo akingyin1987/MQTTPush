@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 顶部通知条根布局（FrameLayout，merge 需要 parent） -->
+<FrameLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="?attr/colorPrimaryContainer">
+
+    <!-- ViewPager2 滚动内容 -->
+    <androidx.viewpager2.widget.ViewPager2
+        android:id="@+id/pager_notifications"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal" />
+
+    <!-- 分页指示器（点） -->
+    <LinearLayout
+        android:id="@+id/indicator_notifications"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="end|center_vertical"
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:paddingHorizontal="8dp"
+        android:paddingVertical="4dp" />
+
+</FrameLayout>

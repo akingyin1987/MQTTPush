@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- PushNotificationBar 自定义属性 -->
+    <declare-styleable name="PushNotificationBar">
+        <!-- 是否自动滚动 -->
+        <attr name="autoScroll" format="boolean" />
+        <!-- 滚动间隔（毫秒） -->
+        <attr name="scrollInterval" format="integer" />
+        <!-- 背景色 -->
+        <attr name="barBackgroundColor" format="color" />
+        <!-- 文字颜色 -->
+        <attr name="barTextColor" format="color" />
+    </declare-styleable>
+</resources>
