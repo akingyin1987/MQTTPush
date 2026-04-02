@@ -2,7 +2,6 @@ package com.push.core.service
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -14,9 +13,11 @@ import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonObject
 import com.hivemq.client.mqtt.MqttClient
+import com.hivemq.client.mqtt.datatypes.MqttQos
+import com.hivemq.client.mqtt.datatypes.MqttTopic
 import com.hivemq.client.mqtt.mqtt5.Mqtt5AsyncClient
 import com.hivemq.client.mqtt.mqtt5.message.publish.Mqtt5Publish
-
+import com.push.core.R
 import com.push.core.model.*
 import com.push.core.repository.MessageRepository
 import kotlinx.coroutines.Dispatchers
@@ -29,7 +30,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
-import java.util.function.Consumer
 
 /**
  * MQTT 推送服务（HiveMQ 版本）
@@ -83,6 +83,7 @@ class PushService : LifecycleService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        super.onStartCommand(intent, flags, startId)
         when (intent?.action) {
             ACTION_CONNECT -> {
                 val config = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -109,7 +110,10 @@ class PushService : LifecycleService() {
         return START_STICKY
     }
 
-    override fun onBind(intent: Intent?): IBinder? = null
+    override fun onBind(intent: Intent): IBinder? {
+        return super.onBind(intent)
+    }
+
 
     // ==================== 连接管理 ====================
 
@@ -132,35 +136,35 @@ class PushService : LifecycleService() {
                 .useMqttVersion5()
                 .buildAsync()
 
-            val connectBuilder = mqttClient!!.connectWith()
+            // 构建连接参数
+            val connect = mqttClient!!.connectWith()
                 .cleanStart(config.cleanSession)
                 .sessionExpiryInterval(0)
-                .keepAliveInterval(config.keepAliveInterval)
-
-            config.username?.let { user ->
-                connectBuilder.simpleAuth()
-                    .username(user)
+                .keepAlive(config.keepAliveInterval)
+                .simpleAuth()
+                    .username(config.username ?: "")
                     .password(config.password?.toByteArray() ?: ByteArray(0))
                     .applySimpleAuth()
+                .send()
+
+            connect.whenComplete { _, throwable ->
+                if (throwable != null) {
+                    _connectionStatus.value = ConnectionStatus.Error(throwable.message ?: "连接失败")
+                } else {
+                    _connectionStatus.value = ConnectionStatus.Connected
+                    _subscriptions.value.forEach { subscribe(it, 0) }
+                    startForeground(NOTIFICATION_ID, buildNotification("已连接"))
+                }
             }
 
-            connectBuilder.send()
-                .whenComplete { _, throwable ->
-                    if (throwable != null) {
-                        _connectionStatus.value = ConnectionStatus.Error(throwable.message ?: "连接失败")
-                    } else {
-                        _connectionStatus.value = ConnectionStatus.Connected
-                        _subscriptions.value.forEach { subscribe(it, 0) }
-                        startForeground(NOTIFICATION_ID, buildNotification("已连接"))
-                    }
-                }
-
             // 设置消息回调
-            mqttClient!!.publishes(Consumer { publish: Mqtt5Publish ->
+            mqttClient?.publishes(
+                com.hivemq.client.mqtt.MqttGlobalPublishFilter.ALL
+            ) { publish: Mqtt5Publish ->
                 lifecycleScope.launch(Dispatchers.IO) {
                     handleIncomingMessage(publish.topic.toString(), publish)
                 }
-            })
+            }
 
         } catch (e: Exception) {
             _connectionStatus.value = ConnectionStatus.Error(e.message ?: "未知错误")
@@ -187,16 +191,16 @@ class PushService : LifecycleService() {
         if (!isConnected()) return
         try {
             val qosLevel = when (qos) {
-                0 -> com.hivemq.client.mqtt.mqtt5.datatypes.Mqtt5QoS.AT_MOST_ONCE
-                1 -> com.hivemq.client.mqtt.mqtt5.datatypes.Mqtt5QoS.AT_LEAST_ONCE
-                else -> com.hivemq.client.mqtt.mqtt5.datatypes.Mqtt5QoS.EXACTLY_ONCE
+                0 -> MqttQos.AT_MOST_ONCE
+                1 -> MqttQos.AT_LEAST_ONCE
+                else -> MqttQos.EXACTLY_ONCE
             }
             mqttClient?.subscribeWith()
                 ?.topicFilter(topic)
                 ?.qos(qosLevel)
                 ?.send()
                 ?.whenComplete { _, _ ->
-                    _subscriptions.value = _subscriptions.value + topic
+                    _subscriptions.value += topic
                 }
         } catch (e: Exception) {}
     }
@@ -219,12 +223,12 @@ class PushService : LifecycleService() {
         if (!isConnected()) return
         try {
             val qosLevel = when (qos) {
-                0 -> com.hivemq.client.mqtt.mqtt5.datatypes.Mqtt5QoS.AT_MOST_ONCE
-                1 -> com.hivemq.client.mqtt.mqtt5.datatypes.Mqtt5QoS.AT_LEAST_ONCE
-                else -> com.hivemq.client.mqtt.mqtt5.datatypes.Mqtt5QoS.EXACTLY_ONCE
+                0 -> MqttQos.AT_MOST_ONCE
+                1 -> MqttQos.AT_LEAST_ONCE
+                else -> MqttQos.EXACTLY_ONCE
             }
             mqttClient?.publishWith()
-                ?.topic(Mqtt5Topic.of(topic))
+                ?.topic(MqttTopic.of(topic))
                 ?.payload(payload.toByteArray(StandardCharsets.UTF_8))
                 ?.qos(qosLevel)
                 ?.send()

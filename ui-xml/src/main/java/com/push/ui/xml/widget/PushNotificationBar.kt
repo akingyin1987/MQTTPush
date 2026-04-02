@@ -6,18 +6,21 @@ import android.util.AttributeSet
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.AccelerateInterpolator
 import android.view.animation.DecelerateInterpolator
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
-import androidx.annotation.LayoutRes
 import androidx.core.content.ContextCompat
-import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.push.core.R
+import androidx.viewpager2.widget.ViewPager2
 import com.push.core.model.PushMessage
+import com.push.ui.xml.R
 import java.text.SimpleDateFormat
 import java.util.*
+import androidx.core.content.withStyledAttributes
+import androidx.core.view.isVisible
+import androidx.core.view.isGone
 
 /**
  * XML 版顶部通知条组件
@@ -100,7 +103,7 @@ class PushNotificationBar @JvmOverloads constructor(
             }
         })
 
-        adapter.setListener(object : NotificationAdapter.OnItemListener {
+        adapter.setListener(object : OnItemListener {
             override fun onItemClick(message: PushMessage) {
                 listener?.onClick(message)
             }
@@ -111,10 +114,10 @@ class PushNotificationBar @JvmOverloads constructor(
 
         // 解析 XML 属性
         attrs?.let {
-            val ta = context.obtainStyledAttributes(it, R.styleable.PushNotificationBar)
-            autoScroll = ta.getBoolean(R.styleable.PushNotificationBar_autoScroll, true)
-            scrollIntervalMs = ta.getLong(R.styleable.PushNotificationBar_scrollInterval, 4000L)
-            ta.recycle()
+            context.withStyledAttributes(it, R.styleable.PushNotificationBar) {
+                autoScroll = getBoolean(R.styleable.PushNotificationBar_autoScroll, true)
+                scrollIntervalMs = getInt(R.styleable.PushNotificationBar_scrollInterval, 4000).toLong()
+            }
         }
     }
 
@@ -141,7 +144,7 @@ class PushNotificationBar @JvmOverloads constructor(
      * 显示通知条（带滑入动画）
      */
     fun show() {
-        if (visibility == VISIBLE) return
+        if (isVisible) return
         visibility = VISIBLE
         val animator = ValueAnimator.ofInt(-height, 0)
         animator.duration = 300
@@ -158,7 +161,7 @@ class PushNotificationBar @JvmOverloads constructor(
      * 隐藏通知条（带滑出动画）
      */
     fun hide() {
-        if (visibility == GONE) return
+        if (isGone) return
         val animator = ValueAnimator.ofInt(0, -height)
         animator.duration = 250
         animator.interpolator = AccelerateInterpolator()
@@ -302,10 +305,11 @@ class PushNotificationBar @JvmOverloads constructor(
             }
         }
 
-        interface OnItemListener {
-            fun onItemClick(message: PushMessage)
-            fun onDismissClick(message: PushMessage)
-        }
+
+    }
+    interface OnItemListener {
+        fun onItemClick(message: PushMessage)
+        fun onDismissClick(message: PushMessage)
     }
 
     // ==================== 回调接口 ====================
