@@ -16,6 +16,12 @@ compose-bom = "2024.06.00"
 # KSP（必须与 Kotlin 版本匹配）
 ksp = "2.0.0-1.0.21"
 
+# Protobuf
+protobuf = "0.9.4"
+protobuf-lite = "3.25.3"
+protoc = "3.25.3"
+datastore = "1.1.1"
+
 # AndroidX Lifecycle
 lifecycle = "2.7.0"
 
@@ -37,6 +43,14 @@ appcompat = "1.6.1"
 activity-compose = "1.8.2"
 navigation-compose = "2.7.7"
 fragment = "1.6.2"
+lifecycle-service = "2.10.0"
+
+# Material & Layout
+material = "1.11.0"
+constraintlayout = "2.1.4"
+recyclerview = "1.3.2"
+viewpager2 = "1.0.0"
+swiperefreshlayout = "1.1.0"
 
 # ============================================================
 # 依赖库
@@ -50,12 +64,35 @@ androidx-activity-compose = { module = "androidx.activity:activity-compose", ver
 androidx-fragment-ktx = { module = "androidx.fragment:fragment-ktx", version.ref = "fragment" }
 androidx-navigation-compose = { module = "androidx.navigation:navigation-compose", version.ref = "navigation-compose" }
 
+# Material & Layout
+material = { module = "com.google.android.material:material", version.ref = "material" }
+androidx-constraintlayout = { module = "androidx.constraintlayout:constraintlayout", version.ref = "constraintlayout" }
+androidx-recyclerview = { module = "androidx.recyclerview:recyclerview", version.ref = "recyclerview" }
+androidx-viewpager2 = { module = "androidx.viewpager2:viewpager2", version.ref = "viewpager2" }
+androidx-swiperefreshlayout = { module = "androidx.swiperefreshlayout:swiperefreshlayout", version.ref = "swiperefreshlayout" }
+
 # Lifecycle
 androidx-lifecycle-runtime-ktx = { module = "androidx.lifecycle:lifecycle-runtime-ktx", version.ref = "lifecycle" }
 androidx-lifecycle-viewmodel-ktx = { module = "androidx.lifecycle:lifecycle-viewmodel-ktx", version.ref = "lifecycle" }
 androidx-lifecycle-livedata-ktx = { module = "androidx.lifecycle:lifecycle-livedata-ktx", version.ref = "lifecycle" }
 androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
 androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle" }
+
+# Room
+androidx-room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
+androidx-room-ktx = { module = "androidx.room:room-ktx", version.ref = "room" }
+androidx-room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
+
+# Coroutines
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
+
+# MQTT
+hivemq-client = { module = "com.hivemq:hivemq-mqtt-client", version.ref = "hivemq" }
+
+# Gson
+gson = { module = "com.google.code.gson:gson", version.ref = "gson" }
+androidx-lifecycle-service = { group = "androidx.lifecycle", name = "lifecycle-service", version.ref = "lifecycle-service" }
 
 # Compose BOM
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "compose-bom" }
@@ -68,19 +105,10 @@ compose-material3 = { module = "androidx.compose.material3:material3" }
 compose-material-icons-extended = { module = "androidx.compose.material:material-icons-extended" }
 compose-runtime-livedata = { module = "androidx.compose.runtime:runtime-livedata" }
 
-# Room
-androidx-room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
-androidx-room-ktx = { module = "androidx.room:room-ktx", version.ref = "room" }
-
-# Coroutines
-kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
-kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
-
-# MQTT
-hivemq-client = { module = "com.hivemq:hivemq-mqtt-client", version.ref = "hivemq" }
-
-# Gson
-gson = { module = "com.google.code.gson:gson", version.ref = "gson" }
+# DataStore & Protobuf
+androidx-datastore = { module = "androidx.datastore:datastore", version.ref = "datastore" }
+protobuf-kotlin-lite = { module = "com.google.protobuf:protobuf-kotlin-lite", version.ref = "protobuf-lite" }
+protobuf-protoc = { module = "com.google.protobuf:protoc", version.ref = "protoc" }
 
 # ============================================================
 # 插件
@@ -93,6 +121,7 @@ kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-parcelize = { id = "org.jetbrains.kotlin.plugin.parcelize", version.ref = "kotlin" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
+protobuf = { id = "com.google.protobuf", version.ref = "protobuf" }
 
 # ============================================================
 # 快捷 Bundle

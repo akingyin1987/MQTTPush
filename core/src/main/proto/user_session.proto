@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+option java_package         = "com.push.core.proto";
+option java_outer_classname = "UserSessionProto";
+option java_multiple_files  = true;
+
+// 持久化的用户会话
+message UserSessionData {
+    string user_id             = 1;   // 用户唯一 ID（空字符串 = 未登录）
+    repeated string group_ids  = 2;   // 所属分组列表
+    int64  login_at            = 3;   // 登录时间戳（ms）
+    bool   subscribe_broadcast = 4;   // 是否订阅全量广播
+    map<string, string> extras = 5;   // 扩展字段（token、角色等）
+}

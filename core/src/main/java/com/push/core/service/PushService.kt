@@ -8,19 +8,23 @@ import android.content.Intent
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonObject
 import com.hivemq.client.mqtt.MqttClient
 import com.hivemq.client.mqtt.mqtt5.Mqtt5AsyncClient
-import com.hivemq.client.mqtt.mqtt5.datatypes.Mqtt5Topic
 import com.hivemq.client.mqtt.mqtt5.message.publish.Mqtt5Publish
-import com.push.core.R
+
 import com.push.core.model.*
+import com.push.core.repository.MessageRepository
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.nio.charset.StandardCharsets
@@ -31,7 +35,7 @@ import java.util.function.Consumer
  * MQTT 推送服务（HiveMQ 版本）
  * 使用 lifecycleScope 管理协程生命周期
  */
-class PushService : Service() {
+class PushService : LifecycleService() {
 
     private var mqttClient: Mqtt5AsyncClient? = null
     private val gson: Gson = GsonBuilder().setPrettyPrinting().create()

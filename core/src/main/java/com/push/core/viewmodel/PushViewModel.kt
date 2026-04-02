@@ -67,8 +67,12 @@ class PushViewModel(application: Application) : AndroidViewModel(application) {
 
     // ==================== 登录 / 登出 ====================
 
+    // 登录结果单次事件
+    private val _loginResult = MutableStateFlow<LoginResult?>(null)
+    val loginResult: StateFlow<LoginResult?> = _loginResult.asStateFlow()
+
     /**
-     * 用户登录
+     * 用户登录（内部走协程，结果通过 loginResult Flow 回调）
      * 自动订阅：push/app1/user/{userId}/# + push/app1/group/{groupId}/#
      */
     fun login(
@@ -76,16 +80,21 @@ class PushViewModel(application: Application) : AndroidViewModel(application) {
         groupIds: List<String> = emptyList(),
         extras: Map<String, String> = emptyMap(),
         subscribeBroadcast: Boolean = true
-    ): LoginResult {
-        return pushManager.login(userId, groupIds, extras, subscribeBroadcast)
+    ) {
+        viewModelScope.launch {
+            val result = pushManager.login(userId, groupIds, extras, subscribeBroadcast)
+            _loginResult.value = result
+        }
     }
 
+    fun consumeLoginResult() { _loginResult.value = null }
+
     /**
-     * 用户登出
-     * 自动取消所有订阅 + 清除会话
+     * 用户登出（内部走协程）
+     * 自动取消所有订阅 + 清除 DataStore 会话
      */
-    fun logout(): LogoutResult {
-        return pushManager.logout()
+    fun logout() {
+        viewModelScope.launch { pushManager.logout() }
     }
 
     // ==================== 连接操作 ====================
