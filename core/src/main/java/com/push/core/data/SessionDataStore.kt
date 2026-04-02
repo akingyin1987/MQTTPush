@@ -45,5 +45,5 @@ object UserSessionDataStore {
 }
 
 /** 便捷扩展属性，与 Preferences DataStore 风格一致 */
-val Context.userSessionDataStore: DataStore<UserSessionData>
+internal val Context.userSessionDataStore: DataStore<UserSessionData>
     get() = UserSessionDataStore.getInstance(this)

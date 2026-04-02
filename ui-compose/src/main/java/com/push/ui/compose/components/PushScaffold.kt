@@ -1,6 +1,7 @@
 package com.push.ui.compose.components
 
 import androidx.compose.animation.*
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -19,6 +20,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.push.core.model.PushMessage
@@ -79,10 +81,10 @@ import java.util.*
 fun PushScaffold(
     viewModel: PushViewModel,
     modifier: Modifier = Modifier,
-    topBar: (@Composable () -> Unit)? = null,
-    bottomBar: (@Composable () -> Unit)? = null,
-    floatingActionButton: (@Composable () -> Unit)? = null,
-    snackbarHost: (@Composable () -> Unit)? = null,
+    topBar: (@Composable () -> Unit) = {},
+    bottomBar: (@Composable () -> Unit) = {},
+    floatingActionButton: (@Composable () -> Unit) = {},
+    snackbarHost: (@Composable () -> Unit) = {},
     containerColor: Color = MaterialTheme.colorScheme.background,
     // 通知条配置
     showNotification: Boolean = true,
@@ -184,9 +186,9 @@ private fun PushNotificationBarSimple(
                 shape = CircleShape,
                 color = MaterialTheme.colorScheme.primary
             ) {
-                Box(ContentAlignment.Center) {
+                Box( contentAlignment = Alignment.Center) {
                     Icon(
-                        Notifications,
+                        Icons.Default.Notifications,
                         contentDescription = null,
                         tint = Color.White,
                         modifier = Modifier.size(16.dp)
@@ -287,7 +289,7 @@ private fun SimpleNotificationItem(
             modifier = Modifier.size(24.dp)
         ) {
             Icon(
-                Close,
+                Icons.Default.Close,
                 contentDescription = "关闭",
                 tint = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f),
                 modifier = Modifier.size(14.dp)

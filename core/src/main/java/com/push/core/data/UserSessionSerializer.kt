@@ -11,7 +11,7 @@ import java.io.OutputStream
  * Proto DataStore Serializer
  * 负责 UserSessionData 的序列化 / 反序列化
  */
-object UserSessionSerializer : Serializer<UserSessionData> {
+internal object UserSessionSerializer : Serializer<UserSessionData> {
 
     /** 默认值 = 未登录状态（userId 为空） */
     override val defaultValue: UserSessionData

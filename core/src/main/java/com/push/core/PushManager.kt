@@ -1,5 +1,6 @@
 package com.push.core
 
+import android.app.Application
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
@@ -44,7 +45,7 @@ import kotlinx.coroutines.flow.*
  * mgr.currentSession.collect { session -> ... }
  * ```
  */
-class PushManager private constructor(private val context: Context) {
+class PushManager private constructor(private val context: Application) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -120,12 +121,18 @@ class PushManager private constructor(private val context: Context) {
         userId: String,
         groupIds: List<String> = emptyList(),
         extras: Map<String, String> = emptyMap(),
-        subscribeBroadcast: Boolean = true
+        subscribeBroadcast: Boolean = true,
+        token: String = "",
+        tokenExpiresAt: Long = 0L,
+        appId: String = "app1"
     ): LoginResult {
         if (userId.isBlank()) return LoginResult.Error("userId 不能为空")
+        if (appId.isBlank()) return LoginResult.Error("appId 不能为空")
 
         // 取消旧订阅
         currentSession.value?.subscribedTopics?.forEach { unsubscribe(it) }
+
+        val loginAt = System.currentTimeMillis()
 
         // 写入 Proto DataStore（原子操作）
         context.userSessionDataStore.updateData { current ->
@@ -133,18 +140,25 @@ class PushManager private constructor(private val context: Context) {
                 .setUserId(userId)
                 .clearGroupIds()
                 .addAllGroupIds(groupIds)
-                .setLoginAt(System.currentTimeMillis())
+                .setLoginAt(loginAt)
                 .setSubscribeBroadcast(subscribeBroadcast)
                 .clearExtras()
                 .putAllExtras(extras)
+                .setToken(token)
+                .setTokenExpiresAt(tokenExpiresAt)
+                .setAppId(appId)
                 .build()
         }
 
         // 订阅专属主题（DataStore 写完后 currentSession 已更新）
         val session = UserSession(
             userId = userId,
+            token = token,
+            tokenExpiresAt = tokenExpiresAt,
+            appId = appId,
             groupIds = groupIds,
             extras = extras,
+            loginAt = loginAt,
             subscribeBroadcast = subscribeBroadcast
         )
         session.subscribedTopics.forEach { subscribe(it, qos = 1) }
@@ -217,6 +231,9 @@ class PushManager private constructor(private val context: Context) {
         if (userId.isBlank()) return null
         return UserSession(
             userId = userId,
+            token = token,
+            tokenExpiresAt = tokenExpiresAt,
+            appId = appId.ifBlank { "app1" },
             groupIds = groupIdsList.toList(),
             extras = extrasMap.toMap(),
             loginAt = loginAt,
@@ -228,9 +245,9 @@ class PushManager private constructor(private val context: Context) {
         @Volatile
         private var INSTANCE: PushManager? = null
 
-        fun getInstance(context: Context): PushManager {
+        fun getInstance(application: Application): PushManager {
             return INSTANCE ?: synchronized(this) {
-                INSTANCE ?: PushManager(context.applicationContext).also { INSTANCE = it }
+                INSTANCE ?: PushManager(application).also { INSTANCE = it }
             }
         }
     }

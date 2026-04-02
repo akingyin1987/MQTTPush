@@ -10,5 +10,8 @@ message UserSessionData {
     repeated string group_ids  = 2;   // 所属分组列表
     int64  login_at            = 3;   // 登录时间戳（ms）
     bool   subscribe_broadcast = 4;   // 是否订阅全量广播
-    map<string, string> extras = 5;   // 扩展字段（token、角色等）
+    map<string, string> extras = 5;   // 扩展字段（业务自定义 KV）
+    string token               = 6;   // MQTT 鉴权 token
+    int64  token_expires_at    = 7;   // token 过期时间戳（ms）
+    string app_id              = 8;   // 应用标识，用于主题前缀
 }

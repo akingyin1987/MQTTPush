@@ -3,6 +3,7 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.ksp)
     alias(libs.plugins.protobuf)
+    alias(libs.plugins.kotlin.parcelize)
 }
 
 android {
@@ -17,7 +18,7 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -45,7 +46,7 @@ android {
 // ==================== Protobuf 配置 ====================
 protobuf {
     protoc {
-        artifact = libs.protobuf.protoc.get().module.toString()
+        artifact = "com.google.protobuf:protoc:${libs.versions.protoc.get()}"
     }
     generateProtoTasks {
         all().forEach { task ->
@@ -67,11 +68,11 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.ktx)
     implementation(libs.androidx.lifecycle.livedata.ktx)
-    implementation(libs.androidx.activity.compose)
+  //  implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.fragment.ktx)
 
-    // Compose BOM
-    implementation(platform(libs.compose.bom))
+//    // Compose BOM
+//    implementation(platform(libs.compose.bom))
 
     // Coroutines
     implementation(libs.kotlinx.coroutines.android)
@@ -91,4 +92,7 @@ dependencies {
     // Proto DataStore（替换 Preferences DataStore）
     implementation(libs.androidx.datastore)
     implementation(libs.protobuf.kotlin.lite)
+
+    // WorkManager
+    implementation(libs.androidx.work.runtime.ktx)
 }

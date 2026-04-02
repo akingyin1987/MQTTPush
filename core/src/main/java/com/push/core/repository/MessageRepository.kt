@@ -43,11 +43,8 @@ class MessageRepository private constructor(database: PushDatabase) {
     /** 获取未读数量 */
     fun getUnreadCount(): Flow<Int> = dao.getUnreadCount()
 
-    /** 获取最新未读（Top N） */
+    /** 获取最新未读（Top N），常用于通知条、悬浮提醒。 */
     fun getLatestUnread(limit: Int = 5): Flow<List<PushMessage>> = dao.getLatestUnread(limit)
-
-    /** 按 ID 查询 */
-    suspend fun getById(id: Long): PushMessage? = dao.getById(id)
 
     // ==================== 消息操作 ====================
 
@@ -80,12 +77,6 @@ class MessageRepository private constructor(database: PushDatabase) {
 
     /** 清空已读消息 */
     suspend fun clearRead() = dao.clearRead()
-
-    /** 清理过期消息 */
-    suspend fun clearExpired() = dao.clearExpired()
-
-    /** 标记已通知 */
-    suspend fun markAsNotified(id: Long) = dao.markAsNotified(id)
 
     // ==================== 工厂方法 ====================
 

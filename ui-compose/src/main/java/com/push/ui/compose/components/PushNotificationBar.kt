@@ -1,6 +1,7 @@
 package com.push.ui.compose.components
 
 import androidx.compose.animation.*
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.HorizontalPager
@@ -241,7 +242,7 @@ private fun PushNotificationBarImpl(
                 shape = CircleShape,
                 color = (iconTint ?: MaterialTheme.colorScheme.primary)
             ) {
-                Box(ContentAlignment.Center) {
+                Box( contentAlignment = Alignment.Center) {
                     Icon(
                         Icons.Default.Notifications,
                         null,
