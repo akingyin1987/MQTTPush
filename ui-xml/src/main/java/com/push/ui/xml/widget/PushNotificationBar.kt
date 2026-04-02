@@ -215,22 +215,28 @@ class PushNotificationBar @JvmOverloads constructor(
         if (count <= 1) return
 
         for (i in 0 until count) {
+            val isActive = (i == position)
             val dot = ImageView(context).apply {
-                val size = if (i == position) dp(6f) else dp(5f)
+                val size = if (isActive) dp(6f) else dp(5f)
                 layoutParams = LayoutParams(size, size).apply {
                     marginStart = dp(2f)
                     marginEnd = dp(2f)
                 }
-                setImageDrawable(
-                    ContextCompat.getDrawable(context, R.drawable.indicator_dot)?.apply {
-                        setTint(
-                            if (i == position)
-                                ContextCompat.getColor(context, R.color.primary)
-                            else
-                                ContextCompat.getColor(context, R.color.primary).let { c -> (c and 0x00FFFFFF) or (0x66000000.toInt()) }
-                        )
-                    }
-                )
+                
+                // 使用颜色创建圆形 drawable
+                val color = if (isActive) {
+                    ContextCompat.getColor(context, R.color.primary)
+                } else {
+                    ContextCompat.getColor(context, R.color.indicator_inactive)
+                }
+                
+                val drawable = android.graphics.drawable.ShapeDrawable(android.graphics.drawable.shapes.OvalShape()).apply {
+                    this.paint.color = color
+                    intrinsicWidth = size
+                    intrinsicHeight = size
+                }
+                
+                setImageDrawable(drawable)
             }
             pageIndicator.addView(dot)
         }
