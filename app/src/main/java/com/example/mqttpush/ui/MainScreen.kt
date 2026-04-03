@@ -1,53 +1,14 @@
 package com.example.mqttpush.ui
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.animation.*
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Cable
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Inbox
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Label
-import androidx.compose.material.icons.filled.LinkOff
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Subscriptions
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -61,23 +22,24 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.push.core.model.BrokerConfig
 import com.push.core.model.ConnectionStatus
 import com.push.core.viewmodel.PushViewModel
-import com.push.ui.compose.screen.LoginScreen
-import com.push.ui.compose.screen.MessageListScreen
-import com.push.ui.compose.screen.SessionCard
+import com.push.ui.compose.screen.*
 import kotlinx.coroutines.flow.StateFlow
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(viewModel: PushViewModel = viewModel()) {
-    val isLoggedIn by viewModel.isLoggedIn.collectAsState()
-    val currentSession by viewModel.currentSession.collectAsState()
     val connectionStatus by viewModel.connectionStatus.collectAsState()
-    val uiState by viewModel.messages.collectAsState()
-    val unreadCount by viewModel.unreadCount.collectAsState()
-    val currentFilter by viewModel.currentFilter.collectAsState()
-    var currentTab by remember { mutableIntStateOf(0) }
+    val isLoggedIn by viewModel.isLoggedIn.collectAsState()
 
-    // 未登录 → 显示登录页
+    // 第一步：未连接 → 显示连接配置
+    if (connectionStatus == ConnectionStatus.Disconnected || connectionStatus == ConnectionStatus.Error("")) {
+        ConnectionSetupScreen(
+            connectionStatus = connectionStatus,
+            onConnect = viewModel::connect
+        )
+        return
+    }
+
+    // 第二步：已连接但未登录 → 显示登录页
     if (!isLoggedIn) {
         LoginScreen(
             viewModel = viewModel,
@@ -86,7 +48,268 @@ fun MainScreen(viewModel: PushViewModel = viewModel()) {
         return
     }
 
-    // 已登录 → 主界面
+    // 第三步：已登录 → 显示主界面
+    MainContent(viewModel = viewModel)
+}
+
+/**
+ * 连接配置页面（首页）
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ConnectionSetupScreen(
+    connectionStatus: ConnectionStatus,
+    onConnect: (BrokerConfig) -> Unit
+) {
+    var host by remember { mutableStateOf("10.0.2.2") }
+    var port by remember { mutableStateOf("1883") }
+    var clientId by remember { mutableStateOf("android-client") }
+    var username by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var isConnecting by remember { mutableStateOf(false) }
+    var showError by remember { mutableStateOf("") }
+
+    // 监听连接状态
+    LaunchedEffect(connectionStatus) {
+        when (connectionStatus) {
+            is ConnectionStatus.Connecting -> isConnecting = true
+            is ConnectionStatus.Connected -> isConnecting = false
+            is ConnectionStatus.Error -> {
+                isConnecting = false
+                showError = connectionStatus.message
+            }
+            else -> isConnecting = false
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Spacer(Modifier.height(48.dp))
+
+        // Logo + 标题
+        Text("📡", fontSize = 64.sp)
+        Spacer(Modifier.height(16.dp))
+        Text(
+            "MQTT Push",
+            style = MaterialTheme.typography.headlineLarge,
+            fontWeight = FontWeight.Bold
+        )
+        Text(
+            "配置 Broker 连接",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+        )
+
+        Spacer(Modifier.height(32.dp))
+
+        // 连接状态提示
+        if (connectionStatus is ConnectionStatus.Error) {
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Default.Error,
+                        null,
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "连接失败: ${connectionStatus.message}",
+                        color = MaterialTheme.colorScheme.error,
+                        fontSize = 13.sp
+                    )
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+        }
+
+        // 配置表单
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = MaterialTheme.shapes.large
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                // 服务器 + 端口
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedTextField(
+                        value = host,
+                        onValueChange = { host = it },
+                        label = { Text("服务器") },
+                        placeholder = { Text("IP 或域名") },
+                        modifier = Modifier.weight(2f),
+                        singleLine = true,
+                        leadingIcon = { Icon(Icons.Default.Cloud, null) }
+                    )
+                    OutlinedTextField(
+                        value = port,
+                        onValueChange = { port = it },
+                        label = { Text("端口") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        leadingIcon = { Icon(Icons.Default.Numbers, null) }
+                    )
+                }
+
+                // Client ID
+                OutlinedTextField(
+                    value = clientId,
+                    onValueChange = { clientId = it },
+                    label = { Text("Client ID") },
+                    placeholder = { Text("唯一标识") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    leadingIcon = { Icon(Icons.Default.Fingerprint, null) }
+                )
+
+                HorizontalDivider()
+
+                // 认证（可选）
+                Text(
+                    "认证（可选）",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                )
+
+                OutlinedTextField(
+                    value = username,
+                    onValueChange = { username = it },
+                    label = { Text("用户名") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    leadingIcon = { Icon(Icons.Default.Person, null) }
+                )
+
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("密码") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    leadingIcon = { Icon(Icons.Default.Lock, null) }
+                )
+            }
+        }
+
+        Spacer(Modifier.height(24.dp))
+
+        // 连接按钮
+        Button(
+            onClick = {
+                showError = ""
+                if (host.isBlank()) {
+                    showError = "服务器地址不能为空"
+                    return@Button
+                }
+                val portNum = port.toIntOrNull()
+                if (portNum == null || portNum <= 0 || portNum > 65535) {
+                    showError = "端口号无效"
+                    return@Button
+                }
+                if (clientId.isBlank()) {
+                    clientId = "client-${System.currentTimeMillis()}"
+                }
+
+                onConnect(
+                    BrokerConfig(
+                        host = host.trim(),
+                        port = portNum,
+                        clientId = clientId.trim(),
+                        username = username.takeIf { it.isNotBlank() },
+                        password = password.takeIf { it.isNotBlank() }
+                    )
+                )
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp),
+            enabled = !isConnecting,
+            shape = MaterialTheme.shapes.medium
+        ) {
+            if (isConnecting) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp),
+                    color = Color.White,
+                    strokeWidth = 2.dp
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("连接中...")
+            } else {
+                Icon(Icons.Default.Cable, null)
+                Spacer(Modifier.width(8.dp))
+                Text("连接 Broker", fontWeight = FontWeight.Bold)
+            }
+        }
+
+        // 错误提示
+        AnimatedVisibility(visible = showError.isNotBlank()) {
+            Text(
+                showError,
+                color = MaterialTheme.colorScheme.error,
+                fontSize = 13.sp,
+                modifier = Modifier.padding(top = 8.dp)
+            )
+        }
+
+        Spacer(Modifier.weight(1f))
+
+        // 提示
+        Card(
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            ),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier.padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    Icons.Default.Info,
+                    null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "模拟器连接宿主机用 10.0.2.2，真机用电脑局域网 IP",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 主内容（已登录后显示）
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun MainContent(viewModel: PushViewModel) {
+    val currentSession by viewModel.currentSession.collectAsState()
+    val connectionStatus by viewModel.connectionStatus.collectAsState()
+    val uiState by viewModel.messages.collectAsState()
+    val unreadCount by viewModel.unreadCount.collectAsState()
+    val currentFilter by viewModel.currentFilter.collectAsState()
+    var currentTab by remember { mutableIntStateOf(0) }
+
     Scaffold(
         bottomBar = {
             NavigationBar {
@@ -155,7 +378,7 @@ fun ConnectionScreen(
 ) {
     var host by remember { mutableStateOf("10.0.2.2") }
     var port by remember { mutableStateOf("1883") }
-    var clientId by remember { mutableStateOf("demo-client") }
+    var clientId by remember { mutableStateOf("android-client") }
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
 

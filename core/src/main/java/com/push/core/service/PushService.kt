@@ -1,9 +1,7 @@
 package com.push.core.service
 
-import android.annotation.SuppressLint
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
@@ -19,7 +17,6 @@ import com.hivemq.client.mqtt.MqttGlobalPublishFilter
 import com.hivemq.client.mqtt.datatypes.MqttQos
 import com.hivemq.client.mqtt.datatypes.MqttTopic
 import com.hivemq.client.mqtt.mqtt5.Mqtt5AsyncClient
-import com.hivemq.client.mqtt.mqtt5.message.connect.Mqtt5ConnectBuilder
 import com.hivemq.client.mqtt.mqtt5.message.publish.Mqtt5Publish
 import com.push.core.MessageQueue
 import com.push.core.NetworkManager
@@ -31,6 +28,7 @@ import com.push.core.model.ConnectionStatus
 import com.push.core.model.MessageType
 import com.push.core.model.PushMessage
 import com.push.core.repository.MessageRepository
+import com.push.core.service.PushService.Companion.MAX_RECONNECT_ATTEMPTS
 import com.push.core.worker.MqttReconnectWorker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -138,7 +136,13 @@ internal class PushService : LifecycleService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
-        when (intent?.action) {
+        
+        if (intent?.action == null) {
+            startForeground(NOTIFICATION_ID, buildForegroundNotification("等待连接"))
+            return START_REDELIVER_INTENT
+        }
+        
+        when (intent.action) {
             ACTION_CONNECT    -> handleConnect(intent)
             ACTION_DISCONNECT -> disconnect()
             ACTION_SUBSCRIBE  -> handleSubscribe(intent)
@@ -161,12 +165,18 @@ internal class PushService : LifecycleService() {
     // ─────────────────────────────────────────────────────────────────────────
 
     private fun handleConnect(intent: Intent) {
-        val config: BrokerConfig = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        val config: BrokerConfig? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             intent.getParcelableExtra(EXTRA_CONFIG, BrokerConfig::class.java)
         } else {
             @Suppress("DEPRECATION")
             intent.getParcelableExtra(EXTRA_CONFIG)
-        } ?: return
+        }
+        
+        if (config == null) {
+            Log.w(TAG, "No config provided in intent, showing waiting status")
+            startForeground(NOTIFICATION_ID, buildForegroundNotification("等待连接配置"))
+            return
+        }
 
         if (isConnected()) {
             Log.d(TAG, "Already connected, flush pending queue instead of reconnecting")
@@ -549,7 +559,7 @@ internal class PushService : LifecycleService() {
     }
 
     private fun notificationManager() =
-        getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        getSystemService(NOTIFICATION_SERVICE) as NotificationManager
 
     // ─────────────────────────────────────────────────────────────────────────
     // MQTT 客户端构建（弱网参数自适应）
