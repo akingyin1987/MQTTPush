@@ -99,6 +99,20 @@ interface MessageDao {
     /** 清空已读且未标星的消息。 */
     @Query("DELETE FROM push_messages WHERE isRead = 1 AND isStarred = 0")
     suspend fun clearRead()
+
+    /** 根据 ID 获取单条消息 */
+    @Query("SELECT * FROM push_messages WHERE id = :id")
+    suspend fun getById(id: Long): PushMessage?
+
+    /** 获取未读消息列表（非 Flow，用于批量处理） */
+    @Query("SELECT * FROM push_messages WHERE isRead = 0")
+    suspend fun getUnreadMessagesList(): List<PushMessage>
+
+    /** 标记已读回执已同步 */
+    @Query("UPDATE push_messages SET isReadSynced = 1 WHERE id = :id")
+    suspend fun markReadSynced(id: Long)
+
+
 }
 
 /**

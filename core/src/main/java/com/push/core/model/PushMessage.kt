@@ -6,58 +6,45 @@ import androidx.room.PrimaryKey
 import kotlinx.parcelize.Parcelize
 
 /**
- * 单条推送消息实体。
- *
- * 这个模型同时承担三类职责：
- * 1. Room 持久化实体：落库后可支持消息中心、未读数、星标等功能。
- * 2. UI 展示模型：标题、正文、类型、已读状态都直接供界面使用。
- * 3. 通知去重依据：通过 [isNotified] 避免同一条消息重复弹通知。
+ * 单条推送消息实体
  */
 @Entity(tableName = "push_messages")
 data class PushMessage(
-    /** 本地数据库主键，仅在本地存储后生成。 */
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
 
-    /** MQTT 原始 topic，用于回溯消息来源和过滤。 */
     val topic: String,
-
-    /** MQTT 原始 payload，保留完整文本，方便调试与二次解析。 */
     val payload: String,
-
-    /** QoS 等级：0 = 最多一次，1 = 至少一次，2 = 恰好一次。 */
     val qos: Int = 0,
-
-    /** 用户是否已读，用于消息中心和未读角标。 */
     val isRead: Boolean = false,
-
-    /** 是否被用户标星，常用于重要消息置顶或稍后处理。 */
     val isStarred: Boolean = false,
-
-    /** 归类后的业务消息类型。 */
     val type: MessageType = MessageType.NOTIFICATION,
-
-    /** 消息来源应用标识，适用于多业务线或多端聚合场景。 */
     val sourceApp: String = "mqtt",
-
-    /** 供列表和通知栏展示的标题。 */
     val title: String = "",
-
-    /** 供列表摘要展示的正文。 */
     val content: String = "",
-
-    /** 是否已经展示过系统通知，避免重进页面后重复提醒。 */
     val isNotified: Boolean = false,
-
-    /** 收到消息的本地时间戳（毫秒）。 */
     val receivedAt: Long = System.currentTimeMillis(),
+    val expiresAt: Long = 0,
 
-    /** 业务过期时间；0 表示永不过期。 */
-    val expiresAt: Long = 0
+    /** 消息唯一 ID（服务端生成，用于已读回执） */
+    val messageId: String = "",
+
+    /** 已读回执是否已同步到服务端 */
+    val isReadSynced: Boolean = false
 )
 
 /**
- * 业务消息类型。
+ * 已读回执（发送给服务端）
+ */
+data class ReadReceipt(
+    val messageId: String,
+    val userId: String,
+    val readAt: Long = System.currentTimeMillis()
+)
+
+/**
+ * 业务消息类型
+ *
  *
  * - [NOTIFICATION]：普通通知，如审批、公告、聊天提醒
  * - [ALERT]：告警类消息，如设备异常、风控事件
@@ -99,8 +86,12 @@ enum class MessageStatus {
 sealed class ConnectionStatus {
     data object Disconnected : ConnectionStatus()
     data object Connecting : ConnectionStatus()
-    data object Connected : ConnectionStatus()
-    data class Error(val message: String) : ConnectionStatus()
+    data class Connected(
+        val connectedAt: Long = System.currentTimeMillis(),
+        val connectDuration: Long = 0L,
+        val serverAddress: String = ""
+    ) : ConnectionStatus()
+    data class Error(val message: String, val errorAt: Long = System.currentTimeMillis()) : ConnectionStatus()
     data object Reconnecting : ConnectionStatus()
 }
 

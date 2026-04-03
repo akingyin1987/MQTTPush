@@ -16,15 +16,18 @@ import com.hivemq.client.mqtt.MqttClient
 import com.hivemq.client.mqtt.MqttGlobalPublishFilter
 import com.hivemq.client.mqtt.datatypes.MqttQos
 import com.hivemq.client.mqtt.datatypes.MqttTopic
+import com.hivemq.client.mqtt.lifecycle.MqttDisconnectSource
 import com.hivemq.client.mqtt.mqtt5.Mqtt5AsyncClient
 import com.hivemq.client.mqtt.mqtt5.message.publish.Mqtt5Publish
 import com.push.core.MessageQueue
 import com.push.core.NetworkManager
 import com.push.core.NetworkQuality
 import com.push.core.NetworkState
+import com.push.core.PushManager
 import com.push.core.R
 import com.push.core.model.BrokerConfig
 import com.push.core.model.ConnectionStatus
+import com.push.core.model.MessageParser
 import com.push.core.model.MessageType
 import com.push.core.model.PushMessage
 import com.push.core.repository.MessageRepository
@@ -44,6 +47,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
+
 
 /**
  * MQTT 推送前台服务（HiveMQ MQTT 5 版本）。
@@ -116,6 +120,10 @@ internal class PushService : LifecycleService() {
         /** 供外部直接观察连接状态（Service 未启动时返回 Disconnected） */
         val connectionStatusFlow: Flow<ConnectionStatus>
             get() = instance?.connectionStatus ?: flowOf(ConnectionStatus.Disconnected)
+
+        /** 供外部直接观察订阅列表（Service 未启动时返回空集） */
+        val subscriptionsFlow: Flow<Set<String>>
+            get() = instance?.subscriptions ?: flowOf(emptySet())
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -125,7 +133,7 @@ internal class PushService : LifecycleService() {
     override fun onCreate() {
         super.onCreate()
         instance = this
-        repository    = MessageRepository.getInstance(applicationContext)
+        repository    = MessageRepository.getInstance(application)
         networkManager = NetworkManager.getInstance(applicationContext)
         messageQueue  = MessageQueue.getInstance(applicationContext)
 
@@ -133,6 +141,9 @@ internal class PushService : LifecycleService() {
         observeNetworkChanges()
         observeConnectionForQueueFlush()
     }
+
+    /** 连接开始时间（用于计算连接耗时） */
+    private var _connectStartTime: Long = 0L
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
@@ -217,7 +228,7 @@ internal class PushService : LifecycleService() {
     }
 
     private fun onNetworkLost() {
-        if (_connectionStatus.value == ConnectionStatus.Connected) {
+        if (_connectionStatus.value is ConnectionStatus.Connected) {
             Log.w(TAG, "Network lost, marking as Reconnecting")
             _connectionStatus.value = ConnectionStatus.Reconnecting
         }
@@ -225,10 +236,27 @@ internal class PushService : LifecycleService() {
 
     private fun onNetworkRestored(quality: NetworkQuality) {
         val status = _connectionStatus.value
-        if ((status == ConnectionStatus.Reconnecting || status is ConnectionStatus.Error)
-            && _currentConfig.value != null) {
-            Log.i(TAG, "Network restored (quality=$quality), triggering reconnect")
-            connect(_currentConfig.value!!)
+        val config = _currentConfig.value
+
+        Log.d(TAG, "onNetworkRestored: status=$status, quality=$quality, hasConfig=${config != null}")
+
+        when {
+            // 已连接 → 检查连接是否还活着
+            status is ConnectionStatus.Connected -> {
+                Log.d(TAG, "Already connected, checking if connection is alive...")
+                // HiveMQ 的 automaticReconnect 会自动处理，这里不需要额外操作
+            }
+
+            // 正在重连或错误状态 → 尝试重连
+            (status == ConnectionStatus.Reconnecting || status is ConnectionStatus.Error) && config != null -> {
+                Log.i(TAG, "Network restored, triggering reconnect")
+                connect(config)
+            }
+
+            // 其他情况
+            else -> {
+                Log.d(TAG, "No action needed for status=$status")
+            }
         }
     }
 
@@ -239,7 +267,7 @@ internal class PushService : LifecycleService() {
     private fun observeConnectionForQueueFlush() {
         connectionStatus
             .onEach { status ->
-                if (status == ConnectionStatus.Connected) {
+                if (status is ConnectionStatus.Connected) {
                     flushPendingMessages()
                 }
             }
@@ -251,21 +279,47 @@ internal class PushService : LifecycleService() {
     // ─────────────────────────────────────────────────────────────────────────
 
     fun connect(config: BrokerConfig) {
-        if (_connectionStatus.value == ConnectionStatus.Connecting ||
-            _connectionStatus.value == ConnectionStatus.Connected) {
-            Log.d(TAG, "Already connecting/connected, skip")
-            return
+        Log.d(TAG, "══════════════════════════════════════════════════════════════")
+        Log.d(TAG, "connect() called with config:")
+        Log.d(TAG, "  host      = ${config.host}")
+        Log.d(TAG, "  port      = ${config.port}")
+        Log.d(TAG, "  clientId  = ${config.clientId}")
+        Log.d(TAG, "  username  = ${config.username ?: "(null)"}")
+        Log.d(TAG, "  keepAlive = ${config.keepAliveInterval}s")
+        Log.d(TAG, "  cleanSession = ${config.cleanSession}")
+        Log.d(TAG, "══════════════════════════════════════════════════════════════")
+
+        // 强制清理旧连接（确保状态干净）
+        if (mqttClient != null) {
+            Log.d(TAG, "Cleaning up old MQTT client...")
+            try {
+                mqttClient?.disconnect()
+            } catch (e: Exception) {
+                Log.w(TAG, "Error disconnecting old client: ${e.message}")
+            }
+            mqttClient = null
         }
+        _connectionStatus.value = ConnectionStatus.Disconnected
+        _subscriptions.value = emptySet()
+        reconnectAttempts = 0
+        reconnectJob?.cancel()
 
         _connectionStatus.value = ConnectionStatus.Connecting
         _currentConfig.value    = config
+        _connectStartTime = System.currentTimeMillis()  // 记录连接开始时间
+        Log.d(TAG, "Connection status set to: Connecting")
 
         try {
             val snapshot = networkManager.currentSnapshot()
+            Log.d(TAG, "Network snapshot: state=${snapshot.state}, quality=${snapshot.quality}")
+
             mqttClient = buildMqttClient(config, snapshot.quality)
+            Log.d(TAG, "MQTT client built successfully")
 
             val keepAlive = adjustKeepAlive(config.keepAliveInterval, snapshot.quality)
+            Log.d(TAG, "Adjusted keepAlive: ${keepAlive}s (base=${config.keepAliveInterval}, quality=${snapshot.quality})")
 
+            Log.d(TAG, "Starting MQTT connectWith()...")
             mqttClient!!.connectWith()
                 .cleanStart(config.cleanSession)
                 .sessionExpiryInterval(0)
@@ -274,11 +328,20 @@ internal class PushService : LifecycleService() {
                 .password(config.password?.toByteArray() ?: ByteArray(0))
                 .applySimpleAuth()
                 .send()
-                .whenComplete { _, throwable ->
+                .whenComplete { ack, throwable ->
                     if (throwable != null) {
+                        Log.e(TAG, "connectWith() FAILED: ${throwable.javaClass.simpleName}: ${throwable.message}")
                         onConnectFailed(config, throwable)
                     } else {
-                        onConnectSuccess()
+                        // ConnAck 返回，连接成功
+                        // addConnectedListener 会处理状态更新，这里只记录日志
+
+                        Log.i(TAG, "connectWith() ConnAck received: reasonCode=${ack.reasonCode}, sessionPresent=${ack.isSessionPresent}")
+                        if (ack.reasonCode.isError) {
+                            Log.e(TAG, "ConnAck reasonCode is error: ${ack.reasonCode}")
+                            onConnectFailed(config, Exception("ConnAck failed: ${ack.reasonCode}"))
+                        }
+                        // 成功的情况由 addConnectedListener 处理
                     }
                 }
 
@@ -295,20 +358,44 @@ internal class PushService : LifecycleService() {
         }
     }
 
-    private fun onConnectSuccess() {
-        Log.i(TAG, "MQTT connected successfully")
-        _connectionStatus.value = ConnectionStatus.Connected
+    private fun onConnectSuccess(isReconnect: Boolean = false) {
+        Log.i(TAG, "onConnectSuccess: isReconnect=$isReconnect")
+        
+        val config = _currentConfig.value
+        val connectDuration = if (config != null) {
+            System.currentTimeMillis() - _connectStartTime
+        } else 0L
+        
+        _connectionStatus.value = ConnectionStatus.Connected(
+            connectedAt = System.currentTimeMillis(),
+            connectDuration = connectDuration,
+            serverAddress = "${config?.host}:${config?.port}"
+        )
+        
         reconnectAttempts = 0
         reconnectJob?.cancel()
-        restoreSubscriptions()
+
+        // 只有首次连接才恢复订阅（重连时订阅还在）
+        if (!isReconnect) {
+            restoreSubscriptions()
+        }
+
         startForeground(NOTIFICATION_ID, buildForegroundNotification("已连接"))
-        // 取消之前调度的 WorkManager 任务
-        _currentConfig.value?.let { MqttReconnectWorker.cancel(applicationContext) }
+        config?.let { MqttReconnectWorker.cancel(applicationContext) }
+    }
+
+    private fun onDisconnected() {
+        Log.w(TAG, "onDisconnected: MQTT connection lost")
+        _connectionStatus.value = ConnectionStatus.Disconnected
+        startForeground(NOTIFICATION_ID, buildForegroundNotification("已断开"))
     }
 
     private fun onConnectFailed(config: BrokerConfig, throwable: Throwable) {
         Log.w(TAG, "MQTT connect failed: ${throwable.message}")
-        _connectionStatus.value = ConnectionStatus.Error(throwable.message ?: "连接失败")
+        _connectionStatus.value = ConnectionStatus.Error(
+            message = throwable.message ?: "连接失败",
+            errorAt = System.currentTimeMillis()
+        )
 
         if (!networkManager.isNetworkAvailable()) {
             Log.w(TAG, "No network available, skip reconnect scheduling")
@@ -349,15 +436,17 @@ internal class PushService : LifecycleService() {
         Log.i(TAG, "Disconnected")
     }
 
-    fun isConnected(): Boolean = _connectionStatus.value == ConnectionStatus.Connected
+    fun isConnected(): Boolean = _connectionStatus.value is ConnectionStatus.Connected
 
     // ─────────────────────────────────────────────────────────────────────────
     // 订阅管理
     // ─────────────────────────────────────────────────────────────────────────
 
     fun subscribe(topic: String, qos: Int = 1) {
+        Log.d(TAG, "subscribe() called: topic=$topic, qos=$qos, connected=${isConnected()}")
+
         if (!isConnected()) {
-            Log.w(TAG, "subscribe($topic) skipped: not connected")
+            Log.w(TAG, "subscribe($topic) SKIPPED: not connected (status=${_connectionStatus.value})")
             return
         }
         mqttClient?.subscribeWith()
@@ -367,9 +456,9 @@ internal class PushService : LifecycleService() {
             ?.whenComplete { _, throwable ->
                 if (throwable == null) {
                     _subscriptions.value += topic
-                    Log.d(TAG, "Subscribed to $topic")
+                    Log.i(TAG, "✓ Subscribed to $topic (qos=$qos)")
                 } else {
-                    Log.w(TAG, "Subscribe failed for $topic: ${throwable.message}")
+                    Log.w(TAG, "✗ Subscribe FAILED for $topic: ${throwable.javaClass.simpleName}: ${throwable.message}")
                 }
             }
     }
@@ -479,17 +568,26 @@ internal class PushService : LifecycleService() {
     // 消息接收处理
     // ─────────────────────────────────────────────────────────────────────────
 
+    /** 消息解析器（从 PushManager 配置获取） */
+    private val messageParser: MessageParser
+        get() = PushManager.getInstance(application).config.messageParser
+
     private suspend fun handleIncomingMessage(topic: String, publish: Mqtt5Publish) {
         val payloadStr = String(publish.payloadAsBytes, StandardCharsets.UTF_8)
-        val parsed     = parsePayload(payloadStr)
+        Log.d(TAG, "╔══════════════════════════════════════════════════════════════")
+        Log.d(TAG, "║ MQTT MESSAGE RECEIVED")
+        Log.d(TAG, "║ topic   = $topic")
+        Log.d(TAG, "║ qos     = ${publish.qos}")
+        Log.d(TAG, "║ payload = $payloadStr")
+        Log.d(TAG, "╚══════════════════════════════════════════════════════════════")
 
-        val message = PushMessage(
-            topic      = topic,
-            payload    = payloadStr,
-            qos        = publish.qos.ordinal,
-            title      = parsed.title,
-            content    = parsed.content,
-            type       = parsed.type,
+        // 使用配置的 MessageParser 解析消息
+        val message = messageParser.parse(topic, payloadStr) ?: PushMessage(
+            topic = topic,
+            payload = payloadStr,
+            title = topic.substringAfterLast('/'),
+            content = payloadStr,
+            type = MessageType.NOTIFICATION,
             receivedAt = System.currentTimeMillis()
         )
 
@@ -500,23 +598,6 @@ internal class PushService : LifecycleService() {
             withContext(Dispatchers.Main) {
                 showMessageNotification(id, message)
             }
-        }
-    }
-
-    private data class ParsedPayload(val title: String, val content: String, val type: MessageType)
-
-    private fun parsePayload(payload: String): ParsedPayload {
-        return try {
-            val json    = gson.fromJson(payload, JsonObject::class.java)
-            val title   = json["title"]?.asString ?: json["t"]?.asString ?: ""
-            val content = json["content"]?.asString
-                ?: json["msg"]?.asString
-                ?: json["c"]?.asString
-                ?: payload
-            val typeStr = json["type"]?.asString ?: MessageType.NOTIFICATION.value
-            ParsedPayload(title, content, MessageType.fromValue(typeStr))
-        } catch (e: Exception) {
-            ParsedPayload("", payload, MessageType.NOTIFICATION)
         }
     }
 
@@ -566,12 +647,14 @@ internal class PushService : LifecycleService() {
     // ─────────────────────────────────────────────────────────────────────────
 
     private fun buildMqttClient(config: BrokerConfig, quality: NetworkQuality): Mqtt5AsyncClient {
-        // 弱网下拉大初始/最大重连延迟
         val (initialDelay, maxDelay) = when (quality) {
             NetworkQuality.POOR     -> 3_000L to 120L
             NetworkQuality.MODERATE -> 1_500L to 60L
             NetworkQuality.GOOD     -> 500L   to 30L
         }
+        Log.d(TAG, "buildMqttClient: host=${config.host}, port=${config.port}, clientId=${config.clientId}")
+        Log.d(TAG, "buildMqttClient: quality=$quality, initialDelay=${initialDelay}ms, maxDelay=${maxDelay}s")
+
         return MqttClient.builder()
             .identifier(config.clientId)
             .serverHost(config.host)
@@ -581,6 +664,59 @@ internal class PushService : LifecycleService() {
                 .maxDelay(maxDelay, TimeUnit.SECONDS)
                 .applyAutomaticReconnect()
             .useMqttVersion5()
+            // 连接成功监听（首次连接和自动重连）
+            .addConnectedListener { context ->
+                val state = context.clientConfig.state
+                val isReconnect = !state.isConnected
+                Log.i(TAG, "✅ MQTT Connected! state=$state, isReconnect=$isReconnect")
+                lifecycleScope.launch(Dispatchers.Main) {
+                    onConnectSuccess(isReconnect = isReconnect)
+                }
+            }
+            // 断开连接监听
+            .addDisconnectedListener { context ->
+                val state = context.clientConfig.state
+                val isServerInitiated = context.source == MqttDisconnectSource.SERVER
+                val isUserInitiated = context.source == MqttDisconnectSource.CLIENT
+
+                Log.w(TAG, "❌ MQTT Disconnected! state=$state, source=${context.source}, isServerInitiated=$isServerInitiated, isUserInitiated=$isUserInitiated")
+
+                lifecycleScope.launch(Dispatchers.Main) {
+                    when {
+                        // 用户主动断开 → 直接退出，不重连
+                        isUserInitiated -> {
+                            Log.i(TAG, "User initiated disconnect, no reconnect")
+                            _connectionStatus.value = ConnectionStatus.Disconnected
+                        }
+
+                        // 服务器主动断开 → 不重连，显示错误
+                        isServerInitiated -> {
+                            Log.w(TAG, "Server initiated disconnect, will not reconnect")
+                            _connectionStatus.value = ConnectionStatus.Error("服务器断开连接")
+                        }
+
+                        // 其他原因（网络丢失等）→ 检查网络状态
+                        else -> {
+                            val networkAvailable = networkManager.isNetworkAvailable()
+                            Log.d(TAG, "Network available: $networkAvailable")
+
+                            if (!networkAvailable) {
+                                // 网络不可用 → 等待网络恢复
+                                Log.w(TAG, "Network lost, waiting for recovery")
+                                _connectionStatus.value = ConnectionStatus.Reconnecting
+                            } else if (state.isConnectedOrReconnect) {
+                                // 网络正常，会自动重连
+                                Log.i(TAG, "Network OK, auto reconnect enabled")
+                                _connectionStatus.value = ConnectionStatus.Reconnecting
+                            } else {
+                                // 不会自动重连
+                                Log.w(TAG, "No auto reconnect, connection lost")
+                                _connectionStatus.value = ConnectionStatus.Disconnected
+                            }
+                        }
+                    }
+                }
+            }
             .buildAsync()
     }
 

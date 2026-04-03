@@ -3,6 +3,7 @@ package com.push.ui.compose.components
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -37,11 +38,16 @@ fun MessageListItem(
     modifier: Modifier = Modifier
 ) {
     val timeFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+    val interactionSource = remember { MutableInteractionSource() }
 
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .clickable { onClick(message) },
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = { onClick(message) }
+            ),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(
             containerColor = if (!message.isRead)

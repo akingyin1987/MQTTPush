@@ -149,7 +149,7 @@ fun LoginScreen(
         Button(
             onClick = {
                 if (userId.isBlank()) { errorMsg = "用户 ID 不能为空"; return@Button }
-                if (connectionStatus != ConnectionStatus.Connected) { errorMsg = "请先连接 MQTT Broker"; return@Button }
+                if (connectionStatus !is   ConnectionStatus.Connected) { errorMsg = "请先连接 MQTT Broker"; return@Button }
                 isLoading = true
                 val groupIds = groupIdsInput.split(",").map { it.trim() }.filter { it.isNotBlank() }
                 viewModel.login(
@@ -159,7 +159,7 @@ fun LoginScreen(
                 )
             },
             modifier = Modifier.fillMaxWidth().height(52.dp),
-            enabled = !isLoading && connectionStatus == ConnectionStatus.Connected,
+            enabled = !isLoading && connectionStatus is ConnectionStatus.Connected,
             shape = RoundedCornerShape(12.dp)
         ) {
             if (isLoading) {

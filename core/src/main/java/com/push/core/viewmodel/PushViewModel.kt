@@ -21,16 +21,13 @@ class PushViewModel(application: Application) : AndroidViewModel(application) {
 
     // ==================== 连接状态 ====================
 
+    // 直接使用 PushService 的 connectionStatus（实时 StateFlow，无轮询）
     val connectionStatus: StateFlow<ConnectionStatus> = PushService.connectionStatusFlow
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ConnectionStatus.Disconnected)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, ConnectionStatus.Disconnected)
 
-    val subscriptions: StateFlow<Set<String>> = flow {
-        while (true) {
-            val subs = PushService.getInstance()?.subscriptions?.value ?: emptySet()
-            emit(subs)
-            kotlinx.coroutines.delay(1000)
-        }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
+    // 订阅列表（实时更新）
+    val subscriptions: StateFlow<Set<String>> = PushService.subscriptionsFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
 
     // ==================== 用户会话 ====================
 
@@ -38,7 +35,7 @@ class PushViewModel(application: Application) : AndroidViewModel(application) {
 
     val isLoggedIn: StateFlow<Boolean> = currentSession
         .map { it != null }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     // ==================== 消息状态 ====================
 
@@ -46,10 +43,10 @@ class PushViewModel(application: Application) : AndroidViewModel(application) {
     val messages: StateFlow<List<PushMessage>> = _messages.asStateFlow()
 
     val unreadCount: StateFlow<Int> = repository.getUnreadCount()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
 
     val latestUnread: StateFlow<List<PushMessage>> = repository.getLatestUnread(5)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     private val _currentFilter = MutableStateFlow(MessageFilter())
     val currentFilter: StateFlow<MessageFilter> = _currentFilter.asStateFlow()
@@ -70,16 +67,15 @@ class PushViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * 用户登录（内部走协程，结果通过 loginResult Flow 回调）
-     * 自动订阅：push/app1/user/{userId}/# + push/app1/group/{groupId}/#
+     * 自动订阅：push/{appId}/user/{userId}/# + push/{appId}/group/{groupId}/#
      */
     fun login(
         userId: String,
         groupIds: List<String> = emptyList(),
         extras: Map<String, String> = emptyMap(),
-        subscribeBroadcast: Boolean = true,
+        subscribeBroadcast: Boolean? = null,
         token: String = "",
-        tokenExpiresAt: Long = 0L,
-        appId: String = "app1"
+        tokenExpiresAt: Long = 0L
     ) {
         viewModelScope.launch {
             val result = pushManager.login(
@@ -88,8 +84,7 @@ class PushViewModel(application: Application) : AndroidViewModel(application) {
                 extras = extras,
                 subscribeBroadcast = subscribeBroadcast,
                 token = token,
-                tokenExpiresAt = tokenExpiresAt,
-                appId = appId
+                tokenExpiresAt = tokenExpiresAt
             )
             _loginResult.value = result
         }
