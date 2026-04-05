@@ -249,6 +249,7 @@ private fun ConnectionStatusCard(status: ConnectionStatus) {
         is ConnectionStatus.Reconnecting -> Triple(Color(0xFFFFAB00), Icons.Default.WifiFind,  "正在重连...")
         is ConnectionStatus.Disconnected -> Triple(Color(0xFFFF5252), Icons.Default.WifiOff,   "未连接 Broker，请先连接")
         is ConnectionStatus.Error        -> Triple(Color(0xFFFF5252), Icons.Default.WifiOff,   "连接错误: ${status.message}")
+        is ConnectionStatus.SessionCleared -> Triple(Color(0xFFFFAB00), Icons.Default.WifiOff,  "已清除会话，请重新登录...")
     }
     Card(
         modifier = Modifier.fillMaxWidth(),

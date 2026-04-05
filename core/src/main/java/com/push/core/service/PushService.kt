@@ -9,9 +9,6 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
-import com.google.gson.Gson
-import com.google.gson.GsonBuilder
-import com.google.gson.JsonObject
 import com.hivemq.client.mqtt.MqttClient
 import com.hivemq.client.mqtt.MqttGlobalPublishFilter
 import com.hivemq.client.mqtt.datatypes.MqttQos
@@ -25,6 +22,7 @@ import com.push.core.NetworkQuality
 import com.push.core.NetworkState
 import com.push.core.PushManager
 import com.push.core.R
+import com.push.core.data.userSessionDataStore
 import com.push.core.model.BrokerConfig
 import com.push.core.model.ConnectionStatus
 import com.push.core.model.MessageParser
@@ -68,7 +66,7 @@ internal class PushService : LifecycleService() {
     // ── 私有状态 ──────────────────────────────────────────────────────────────
 
     private var mqttClient: Mqtt5AsyncClient? = null
-    private val gson: Gson = GsonBuilder().create()
+
 
     private val _connectionStatus = MutableStateFlow<ConnectionStatus>(ConnectionStatus.Disconnected)
     private val _currentConfig    = MutableStateFlow<BrokerConfig?>(null)
@@ -77,6 +75,10 @@ internal class PushService : LifecycleService() {
     // 重连控制
     private var reconnectAttempts = 0
     private var reconnectJob: Job? = null
+
+    /** 服务器主动断开计数，超过上限后清 session */
+    private var serverDisconnectCount = 0
+    private val maxServerDisconnect = 3
 
     // 依赖（延迟初始化，onCreate 之后才有 Context）
     private lateinit var repository: MessageRepository
@@ -300,6 +302,7 @@ internal class PushService : LifecycleService() {
             mqttClient = null
         }
         _connectionStatus.value = ConnectionStatus.Disconnected
+        serverDisconnectCount = 0
         _subscriptions.value = emptySet()
         reconnectAttempts = 0
         reconnectJob?.cancel()
@@ -358,8 +361,44 @@ internal class PushService : LifecycleService() {
         }
     }
 
+    /**
+     * 同步清 session（供 disconnect() 调用，避免循环依赖）
+     * 直接写 DataStore 并通知 UI
+     */
+    private fun clearSession() {
+        _connectionStatus.value = ConnectionStatus.SessionCleared
+        try {
+            lifecycleScope.launch {
+                applicationContext.userSessionDataStore.updateData {
+                    com.push.core.proto.UserSessionData.getDefaultInstance()
+                }
+            }
+
+        } catch (e: Exception) {
+            Log.w(TAG, "clearSession() failed: ${e.message}")
+        }
+    }
+
+    /**
+     * 异步清 session（供协程调用）
+     * 内部重试耗尽时调用，清完通知 UI 跳转登录页
+     */
+    private suspend fun clearSessionAsync() {
+        withContext(Dispatchers.IO) {
+            try {
+                applicationContext.userSessionDataStore.updateData {
+                    com.push.core.proto.UserSessionData.getDefaultInstance()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "clearSessionAsync() failed: ${e.message}")
+            }
+        }
+        _connectionStatus.value = ConnectionStatus.SessionCleared
+    }
+
     private fun onConnectSuccess(isReconnect: Boolean = false) {
         Log.i(TAG, "onConnectSuccess: isReconnect=$isReconnect")
+        serverDisconnectCount = 0
         
         val config = _currentConfig.value
         val connectDuration = if (config != null) {
@@ -430,10 +469,11 @@ internal class PushService : LifecycleService() {
         } finally {
             mqttClient = null
         }
-        _connectionStatus.value = ConnectionStatus.Disconnected
-        _subscriptions.value    = emptySet()
+        _subscriptions.value = emptySet()
         stopForeground(STOP_FOREGROUND_REMOVE)
-        Log.i(TAG, "Disconnected")
+        // 用户主动断开 → 立即清 session，UI 跳转登录页
+        clearSession()
+        Log.i(TAG, "Disconnected (manual)")
     }
 
     fun isConnected(): Boolean = _connectionStatus.value is ConnectionStatus.Connected
@@ -449,6 +489,13 @@ internal class PushService : LifecycleService() {
             Log.w(TAG, "subscribe($topic) SKIPPED: not connected (status=${_connectionStatus.value})")
             return
         }
+
+        // 校验主题过滤器格式，避免 IllegalArgumentException
+        if (!isValidTopicFilter(topic)) {
+            Log.w(TAG, "subscribe($topic) INVALID: '#' must appear as '/#' at end, '+' only between '/' separators")
+            return
+        }
+
         mqttClient?.subscribeWith()
             ?.topicFilter(topic)
             ?.qos(qos.toMqttQos())
@@ -682,38 +729,42 @@ internal class PushService : LifecycleService() {
                 Log.w(TAG, "❌ MQTT Disconnected! state=$state, source=${context.source}, isServerInitiated=$isServerInitiated, isUserInitiated=$isUserInitiated")
 
                 lifecycleScope.launch(Dispatchers.Main) {
-                    when {
-                        // 用户主动断开 → 直接退出，不重连
-                        isUserInitiated -> {
-                            Log.i(TAG, "User initiated disconnect, no reconnect")
-                            _connectionStatus.value = ConnectionStatus.Disconnected
-                        }
+                    // 用户主动断开 → 立即清 session，UI 跳转登录页
+                    if (isUserInitiated) {
+                        Log.i(TAG, "User initiated disconnect, clearing session")
+                        clearSession()
+                        return@launch
+                    }
 
-                        // 服务器主动断开 → 不重连，显示错误
-                        isServerInitiated -> {
-                            Log.w(TAG, "Server initiated disconnect, will not reconnect")
-                            _connectionStatus.value = ConnectionStatus.Error("服务器断开连接")
+                    // 服务器主动断开 → 计数，超过上限则清 session
+                    if (isServerInitiated) {
+                        serverDisconnectCount++
+                        Log.w(TAG, "Server initiated disconnect #${serverDisconnectCount}/$maxServerDisconnect")
+                        if (serverDisconnectCount >= maxServerDisconnect) {
+                            Log.w(TAG, "Server disconnect exceeded limit, clearing session")
+                            clearSessionAsync()
+                        } else {
+                            _connectionStatus.value = ConnectionStatus.Error("服务器断开连接 (${serverDisconnectCount}/$maxServerDisconnect)")
                         }
+                        return@launch
+                    }
 
-                        // 其他原因（网络丢失等）→ 检查网络状态
-                        else -> {
-                            val networkAvailable = networkManager.isNetworkAvailable()
-                            Log.d(TAG, "Network available: $networkAvailable")
+                    // 其他原因（网络丢失等）→ 检查网络状态
+                    val networkAvailable = networkManager.isNetworkAvailable()
+                    Log.d(TAG, "Network available: $networkAvailable")
 
-                            if (!networkAvailable) {
-                                // 网络不可用 → 等待网络恢复
-                                Log.w(TAG, "Network lost, waiting for recovery")
-                                _connectionStatus.value = ConnectionStatus.Reconnecting
-                            } else if (state.isConnectedOrReconnect) {
-                                // 网络正常，会自动重连
-                                Log.i(TAG, "Network OK, auto reconnect enabled")
-                                _connectionStatus.value = ConnectionStatus.Reconnecting
-                            } else {
-                                // 不会自动重连
-                                Log.w(TAG, "No auto reconnect, connection lost")
-                                _connectionStatus.value = ConnectionStatus.Disconnected
-                            }
-                        }
+                    if (!networkAvailable) {
+                        // 网络不可用 → 等待网络恢复
+                        Log.w(TAG, "Network lost, waiting for recovery")
+                        _connectionStatus.value = ConnectionStatus.Reconnecting
+                    } else if (state.isConnectedOrReconnect) {
+                        // 网络正常，会自动重连
+                        Log.i(TAG, "Network OK, auto reconnect enabled")
+                        _connectionStatus.value = ConnectionStatus.Reconnecting
+                    } else {
+                        // 不会自动重连
+                        Log.w(TAG, "No auto reconnect, connection lost")
+                        _connectionStatus.value = ConnectionStatus.Disconnected
                     }
                 }
             }
@@ -745,5 +796,39 @@ internal class PushService : LifecycleService() {
         0    -> MqttQos.AT_MOST_ONCE
         2    -> MqttQos.EXACTLY_ONCE
         else -> MqttQos.AT_LEAST_ONCE
+    }
+
+    /**
+     * MQTT 主题过滤器格式校验。
+     * - # 必须作为独立层级，放在末尾（形如 /#）
+     * - + 只能作为层级占位符，不能首尾出现
+     * - 不能包含非法字符（空字符串、控制字符等）
+     */
+    private fun isValidTopicFilter(topic: String?): Boolean {
+        if (topic.isNullOrBlank()) return false
+
+        // # 必须在末尾，且前面必须是 /
+        val hashIdx = topic.indexOf('#')
+        if (hashIdx != -1 && (hashIdx != topic.length - 1 || (hashIdx > 0 && topic[hashIdx - 1] != '/'))) {
+            return false
+        }
+        // + 不能在首尾层级（+ 前后必须是 /）
+        val parts = topic.split('/')
+        for (part in parts) {
+            if (part.isEmpty()) continue
+            if (part == "+") {
+                // + 单独成一级是合法的
+                continue
+            }
+            if (part.contains('#') || part.contains('+')) {
+                return false
+            }
+        }
+        // 主题不能以 + 或 # 结尾（除非 # 合法地在末尾）
+        val lastPart = parts.lastOrNull() ?: return false
+        if (lastPart == "+") return false
+        if (lastPart.contains('+') && !topic.endsWith("/#")) return false
+
+        return true
     }
 }

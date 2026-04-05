@@ -14,4 +14,5 @@ message UserSessionData {
     string token               = 6;   // MQTT 鉴权 token
     int64  token_expires_at    = 7;   // token 过期时间戳（ms）
     string app_id              = 8;   // 应用标识，用于主题前缀
+    repeated string subscribed_topics = 9;  // 已订阅的主题列表（持久化，重连后恢复）
 }

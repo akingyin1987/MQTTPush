@@ -182,6 +182,7 @@ fun ConnectionIndicator(status: ConnectionStatus) {
         is ConnectionStatus.Reconnecting -> Color(0xFFFFD740) to "重连中"
         is ConnectionStatus.Disconnected -> Color(0xFFFF5252) to "未连接"
         is ConnectionStatus.Error -> Color(0xFFFF5252) to "错误"
+        is ConnectionStatus.SessionCleared -> Color(0xFFFFD740) to "会话已清除"
     }
     Surface(
         shape = RoundedCornerShape(12.dp),

@@ -91,10 +91,21 @@ fun MainScreen(viewModel: PushViewModel = viewModel()) {
     }
 
     // 第一步：未连接或错误 → 显示连接配置
-    if (connectionStatus == ConnectionStatus.Disconnected || connectionStatus is ConnectionStatus.Error) {
+    if (connectionStatus == ConnectionStatus.Disconnected
+        || connectionStatus is ConnectionStatus.Error) {
         ConnectionSetupScreen(
             connectionStatus = connectionStatus,
             onConnect = viewModel::connect
+        )
+        return
+    }
+
+    // SessionCleared：会话已清（用户主动断开 或 服务器断开后耗尽）
+    // → 显示登录页（broker 已连接，可直接登录）
+    if (connectionStatus == ConnectionStatus.SessionCleared) {
+        LoginScreen(
+            viewModel = viewModel,
+            onLoginSuccess = { /* 登录成功自动跳转 */ }
         )
         return
     }
@@ -105,8 +116,7 @@ fun MainScreen(viewModel: PushViewModel = viewModel()) {
         return
     }
 
-    // 第二步：已连接 → 检查登录状态
-    // Connected 状态下，根据登录状态显示不同页面
+    // 第三步：已连接 → 检查登录状态
     if (!isLoggedIn) {
         LoginScreen(
             viewModel = viewModel,
@@ -420,7 +430,7 @@ fun ConnectionStatusIndicator(status: ConnectionStatus) {
         else -> Triple(
             Color(0xFF9E9E9E),
             Icons.Default.CloudOff,
-            "未连接"
+            if (status == ConnectionStatus.SessionCleared) "会话已清除，请重新登录" else "未连接"
         )
     }
 

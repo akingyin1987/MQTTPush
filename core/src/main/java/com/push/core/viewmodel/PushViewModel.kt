@@ -33,8 +33,7 @@ class PushViewModel(application: Application) : AndroidViewModel(application) {
 
     val currentSession: StateFlow<UserSession?> = pushManager.currentSession
 
-    val isLoggedIn: StateFlow<Boolean> = currentSession
-        .map { it != null }
+    val isLoggedIn: StateFlow<Boolean> = pushManager.isLoggedIn
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     // ==================== 消息状态 ====================

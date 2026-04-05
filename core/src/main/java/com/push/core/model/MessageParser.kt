@@ -82,7 +82,7 @@ class JsonMessageParser : MessageParser {
  */
 class SimpleTextMessageParser : MessageParser {
     
-    override fun parse(topic: String, payload: String): PushMessage? {
+    override fun parse(topic: String, payload: String): PushMessage {
         return PushMessage(
             topic = topic,
             payload = payload,

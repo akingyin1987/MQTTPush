@@ -5,6 +5,7 @@ import android.util.Log
 import com.push.core.data.userSessionDataStore
 import com.push.core.model.BrokerConfig
 import com.push.core.model.ConnectionStatus
+import com.push.core.model.DefaultTopicGenerator
 import com.push.core.model.LoginResult
 import com.push.core.model.LogoutResult
 import com.push.core.model.PushConfig
@@ -21,6 +22,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 
 /**
  * Push 推送管理器（单例）
@@ -98,18 +100,6 @@ class PushManager private constructor(private val context: Application) {
     val connectionStatus: StateFlow<ConnectionStatus>
         get() = PushService.getInstance()?.connectionStatus
             ?: MutableStateFlow(ConnectionStatus.Disconnected).asStateFlow()
-
-    // 备用：轮询方式（已废弃，改用上面的实时 Flow）
-    private val _connectionStatus = MutableStateFlow<ConnectionStatus>(ConnectionStatus.Disconnected)
-//    private val statusHandler = Handler(Looper.getMainLooper())
-//    private val statusPoller = object : Runnable {
-//        override fun run() {
-//            PushService.getInstance()?.let {
-//                _connectionStatus.value = it.connectionStatus.value
-//            }
-//            statusHandler.postDelayed(this, 500) // 缩短到 500ms
-//        }
-//    }
 
 
 
@@ -201,6 +191,8 @@ class PushManager private constructor(private val context: Application) {
                 .setToken(token)
                 .setTokenExpiresAt(tokenExpiresAt)
                 .setAppId(effectiveAppId)
+                .clearSubscribedTopics()
+                .addAllSubscribedTopics(session.subscribedTopics)
                 .build()
         }
 
@@ -249,10 +241,28 @@ class PushManager private constructor(private val context: Application) {
 
     fun subscribe(topic: String, qos: Int = 0) {
         PushService.getInstance()?.subscribe(topic, qos)
+        // 同步到 DataStore 持久化
+        scope.launch {
+            syncSubscriptionsToDataStore()
+        }
     }
 
     fun unsubscribe(topic: String) {
         PushService.getInstance()?.unsubscribe(topic)
+        scope.launch {
+            syncSubscriptionsToDataStore()
+        }
+    }
+
+    /** 将当前所有订阅写入 DataStore（手动订阅 + 会话订阅统一持久化） */
+    private suspend fun syncSubscriptionsToDataStore() {
+        val topics = PushService.getInstance()?.subscriptions?.value ?: return
+        context.userSessionDataStore.updateData { current ->
+            current.toBuilder()
+                .clearSubscribedTopics()
+                .addAllSubscribedTopics(topics.toList())
+                .build()
+        }
     }
 
     fun publish(topic: String, payload: String, qos: Int = 0) {
@@ -274,15 +284,31 @@ class PushManager private constructor(private val context: Application) {
      */
     private fun UserSessionData.toUserSession(): UserSession? {
         if (userId.isBlank()) return null
+        val appId = this.appId.ifBlank { "app1" }
+        val groupIds = groupIdsList.toList()
+        val subsTopics = subscribedTopicsList.toList()
+        val generator = DefaultTopicGenerator()
+
+        // 恢复时优先用 DataStore 持久化的 topics（包含手动订阅）
+        // 如果为空（老数据兼容），则按登录参数重新计算
+        val effectiveTopics = subsTopics.ifEmpty {
+            buildList {
+                add(generator.userSubscribeTopic(userId, appId))
+                groupIds.forEach { add(generator.groupSubscribeTopic(it, appId)) }
+                if (subscribeBroadcast) add(generator.broadcastSubscribeTopic(appId))
+            }
+        }
+
         return UserSession(
             userId = userId,
             token = token,
             tokenExpiresAt = tokenExpiresAt,
-            appId = appId.ifBlank { "app1" },
-            groupIds = groupIdsList.toList(),
+            appId = appId,
+            groupIds = groupIds,
             extras = extrasMap.toMap(),
             loginAt = loginAt,
-            subscribeBroadcast = subscribeBroadcast
+            subscribeBroadcast = subscribeBroadcast,
+
         )
     }
 

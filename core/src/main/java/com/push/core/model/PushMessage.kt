@@ -93,6 +93,11 @@ sealed class ConnectionStatus {
     ) : ConnectionStatus()
     data class Error(val message: String, val errorAt: Long = System.currentTimeMillis()) : ConnectionStatus()
     data object Reconnecting : ConnectionStatus()
+    /**
+     * 会话已清（用户主动断开 或 服务器断开后重试耗尽）。
+     * UI 收到此状态 → 跳转登录页。
+     */
+    data object SessionCleared : ConnectionStatus()
 }
 
 /**
