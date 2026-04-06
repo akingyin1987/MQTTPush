@@ -10,9 +10,11 @@ import androidx.core.app.NotificationCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import com.hivemq.client.mqtt.MqttClient
+import com.hivemq.client.mqtt.MqttClientState
 import com.hivemq.client.mqtt.MqttGlobalPublishFilter
 import com.hivemq.client.mqtt.datatypes.MqttQos
 import com.hivemq.client.mqtt.datatypes.MqttTopic
+import com.hivemq.client.mqtt.lifecycle.MqttClientDisconnectedListener
 import com.hivemq.client.mqtt.lifecycle.MqttDisconnectSource
 import com.hivemq.client.mqtt.mqtt5.Mqtt5AsyncClient
 import com.hivemq.client.mqtt.mqtt5.message.publish.Mqtt5Publish
@@ -76,9 +78,78 @@ internal class PushService : LifecycleService() {
     private var reconnectAttempts = 0
     private var reconnectJob: Job? = null
 
+    /** 消息接收开关：登录后开启，退出登录后关闭，关闭时不处理任何消息 */
+    private var messagesEnabled = false
+
     /** 服务器主动断开计数，超过上限后清 session */
     private var serverDisconnectCount = 0
     private val maxServerDisconnect = 3
+
+    /**
+     * 断开连接监听器（提取为类级变量，以便 connect() 时先移除再断开）
+     */
+    private val _disconnectedListener = MqttClientDisconnectedListener { context ->
+        val state = context.clientConfig.state
+        val isServerInitiated = context.source == MqttDisconnectSource.SERVER
+        val isUserInitiated = context.source == MqttDisconnectSource.CLIENT
+
+        Log.w(
+            TAG,
+            "❌ MQTT Disconnected! state=$state, source=${context.source}, isServerInitiated=$isServerInitiated, isUserInitiated=$isUserInitiated"
+        )
+
+        lifecycleScope.launch(Dispatchers.Main) {
+            // 用户主动断开 → 立即清 session，UI 跳转登录页
+            if (isUserInitiated
+                && state != MqttClientState.CONNECTING
+                && state != MqttClientState.CONNECTING_RECONNECT
+            ) {
+                Log.i(TAG, "User initiated disconnect, clearing session")
+                clearSession()
+                return@launch
+            }
+
+            // 服务器主动断开 → 计数，超过上限则清 session
+            if (isServerInitiated) {
+                serverDisconnectCount++
+                Log.w(
+                    TAG,
+                    "Server initiated disconnect #${serverDisconnectCount}/$maxServerDisconnect"
+                )
+                if (serverDisconnectCount >= maxServerDisconnect) {
+                    Log.w(TAG, "Server disconnect exceeded limit, clearing session")
+                    clearSessionAsync()
+                } else {
+                    _connectionStatus.value =
+                        ConnectionStatus.Error("服务器断开连接 (${serverDisconnectCount}/$maxServerDisconnect)")
+                }
+                return@launch
+            }
+
+            // 其他原因（网络丢失等）→ 检查网络状态
+            val networkAvailable = networkManager.isNetworkAvailable()
+            Log.d(TAG, "Network available: $networkAvailable")
+
+            if (!networkAvailable) {
+                // 网络不可用
+                if (state == MqttClientState.CONNECTING) {
+                    // 连接中网络断了 → 视为连接失败
+                    Log.w(TAG, "Network lost during connecting, treating as connect failure")
+                    _connectionStatus.value = ConnectionStatus.Error("网络不可用，请检查网络")
+                } else {
+                    // 重连中网络断了 → 等待网络恢复
+                    Log.w(TAG, "Network lost, waiting for recovery")
+                    _connectionStatus.value = ConnectionStatus.Reconnecting
+                }
+            } else if (state.isConnectedOrReconnect) {
+                Log.i(TAG, "Network OK, auto reconnect enabled")
+                _connectionStatus.value = ConnectionStatus.Reconnecting
+            } else {
+                Log.w(TAG, "Connection lost unexpectedly")
+                _connectionStatus.value = ConnectionStatus.Disconnected
+            }
+        }
+    }
 
     // 依赖（延迟初始化，onCreate 之后才有 Context）
     private lateinit var repository: MessageRepository
@@ -178,13 +249,16 @@ internal class PushService : LifecycleService() {
     // ─────────────────────────────────────────────────────────────────────────
 
     private fun handleConnect(intent: Intent) {
+        Log.i(TAG, "handleConnect() called, action=${intent.action}")
         val config: BrokerConfig? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             intent.getParcelableExtra(EXTRA_CONFIG, BrokerConfig::class.java)
         } else {
             @Suppress("DEPRECATION")
             intent.getParcelableExtra(EXTRA_CONFIG)
         }
-        
+
+        Log.d(TAG, "handleConnect(): config=$config")
+
         if (config == null) {
             Log.w(TAG, "No config provided in intent, showing waiting status")
             startForeground(NOTIFICATION_ID, buildForegroundNotification("等待连接配置"))
@@ -197,6 +271,7 @@ internal class PushService : LifecycleService() {
             return
         }
 
+        Log.i(TAG, "handleConnect(): calling connect($config)")
         connect(config)
     }
 
@@ -282,45 +357,68 @@ internal class PushService : LifecycleService() {
 
     fun connect(config: BrokerConfig) {
         Log.d(TAG, "══════════════════════════════════════════════════════════════")
-        Log.d(TAG, "connect() called with config:")
-        Log.d(TAG, "  host      = ${config.host}")
-        Log.d(TAG, "  port      = ${config.port}")
-        Log.d(TAG, "  clientId  = ${config.clientId}")
-        Log.d(TAG, "  username  = ${config.username ?: "(null)"}")
-        Log.d(TAG, "  keepAlive = ${config.keepAliveInterval}s")
-        Log.d(TAG, "  cleanSession = ${config.cleanSession}")
+        Log.d(TAG, "connect() called: host=${config.host}, port=${config.port}, clientId=${config.clientId}")
         Log.d(TAG, "══════════════════════════════════════════════════════════════")
 
-        // 强制清理旧连接（确保状态干净）
-        if (mqttClient != null) {
-            Log.d(TAG, "Cleaning up old MQTT client...")
-            try {
-                mqttClient?.disconnect()
-            } catch (e: Exception) {
-                Log.w(TAG, "Error disconnecting old client: ${e.message}")
-            }
-            mqttClient = null
+        // 整个生命周期只保留一个 mqttClient，connect() 永远复用
+        if (mqttClient == null) {
+            val snapshot = networkManager.currentSnapshot()
+            mqttClient = buildMqttClient(config, snapshot.quality)
+            Log.d(TAG, "MQTT client built for the first time")
+            _currentConfig.value = config
+            _connectStartTime = System.currentTimeMillis()
+            _connectionStatus.value = ConnectionStatus.Connecting
+            serverDisconnectCount = 0
+            reconnectAttempts = 0
+            reconnectJob?.cancel()
+            doConnect(config)
+            return
         }
-        _connectionStatus.value = ConnectionStatus.Disconnected
-        serverDisconnectCount = 0
+
+        // config 没变 → 复用现有 client，重置计数后直接重连
+        if (config == _currentConfig.value) {
+            Log.d(TAG, "Same config, reusing existing MQTT client")
+            _currentConfig.value = config
+            _connectStartTime = System.currentTimeMillis()
+            _connectionStatus.value = ConnectionStatus.Connecting
+            serverDisconnectCount = 0
+            reconnectAttempts = 0
+            reconnectJob?.cancel()
+            doConnect(config)
+            return
+        }
+
+        // config 变了 → 断开旧连接，清空状态，重建 client
+        Log.d(TAG, "Config changed, rebuilding MQTT client...")
+        try { mqttClient?.disconnect() } catch (_: Exception) {}
+        mqttClient = null
         _subscriptions.value = emptySet()
+        serverDisconnectCount = 0
         reconnectAttempts = 0
         reconnectJob?.cancel()
 
+        val snapshot = networkManager.currentSnapshot()
+        mqttClient = buildMqttClient(config, snapshot.quality)
+        _currentConfig.value = config
+        _connectStartTime = System.currentTimeMillis()
         _connectionStatus.value = ConnectionStatus.Connecting
-        _currentConfig.value    = config
-        _connectStartTime = System.currentTimeMillis()  // 记录连接开始时间
-        Log.d(TAG, "Connection status set to: Connecting")
+        doConnect(config)
+    }
 
+    private fun doConnect(config: BrokerConfig) {
         try {
             val snapshot = networkManager.currentSnapshot()
             Log.d(TAG, "Network snapshot: state=${snapshot.state}, quality=${snapshot.quality}")
 
-            mqttClient = buildMqttClient(config, snapshot.quality)
-            Log.d(TAG, "MQTT client built successfully")
+            // 网络不可用时立即报错，不等 MQTT 超时
+            if (!networkManager.isNetworkAvailable()) {
+                Log.w(TAG, "Network unavailable, aborting connect")
+                _connectionStatus.value = ConnectionStatus.Error("网络不可用，请检查网络连接")
+                return
+            }
 
             val keepAlive = adjustKeepAlive(config.keepAliveInterval, snapshot.quality)
-            Log.d(TAG, "Adjusted keepAlive: ${keepAlive}s (base=${config.keepAliveInterval}, quality=${snapshot.quality})")
+            Log.d(TAG, "Adjusted keepAlive: ${keepAlive}s")
 
             Log.d(TAG, "Starting MQTT connectWith()...")
             mqttClient!!.connectWith()
@@ -336,27 +434,15 @@ internal class PushService : LifecycleService() {
                         Log.e(TAG, "connectWith() FAILED: ${throwable.javaClass.simpleName}: ${throwable.message}")
                         onConnectFailed(config, throwable)
                     } else {
-                        // ConnAck 返回，连接成功
-                        // addConnectedListener 会处理状态更新，这里只记录日志
-
                         Log.i(TAG, "connectWith() ConnAck received: reasonCode=${ack.reasonCode}, sessionPresent=${ack.isSessionPresent}")
                         if (ack.reasonCode.isError) {
-                            Log.e(TAG, "ConnAck reasonCode is error: ${ack.reasonCode}")
                             onConnectFailed(config, Exception("ConnAck failed: ${ack.reasonCode}"))
                         }
-                        // 成功的情况由 addConnectedListener 处理
                     }
                 }
 
-            // 全局消息接收回调
-            mqttClient?.publishes(MqttGlobalPublishFilter.ALL) { publish ->
-                lifecycleScope.launch(Dispatchers.IO) {
-                    handleIncomingMessage(publish.topic.toString(), publish)
-                }
-            }
-
         } catch (e: Exception) {
-            Log.e(TAG, "connect() threw exception: ${e.message}", e)
+            Log.e(TAG, "doConnect() threw: ${e.message}", e)
             _connectionStatus.value = ConnectionStatus.Error(e.message ?: "未知错误")
         }
     }
@@ -399,18 +485,18 @@ internal class PushService : LifecycleService() {
     private fun onConnectSuccess(isReconnect: Boolean = false) {
         Log.i(TAG, "onConnectSuccess: isReconnect=$isReconnect")
         serverDisconnectCount = 0
-        
+
         val config = _currentConfig.value
         val connectDuration = if (config != null) {
             System.currentTimeMillis() - _connectStartTime
         } else 0L
-        
+
         _connectionStatus.value = ConnectionStatus.Connected(
             connectedAt = System.currentTimeMillis(),
             connectDuration = connectDuration,
             serverAddress = "${config?.host}:${config?.port}"
         )
-        
+
         reconnectAttempts = 0
         reconnectJob?.cancel()
 
@@ -419,14 +505,11 @@ internal class PushService : LifecycleService() {
             restoreSubscriptions()
         }
 
+        // 开启消息接收
+        messagesEnabled = true
+
         startForeground(NOTIFICATION_ID, buildForegroundNotification("已连接"))
         config?.let { MqttReconnectWorker.cancel(applicationContext) }
-    }
-
-    private fun onDisconnected() {
-        Log.w(TAG, "onDisconnected: MQTT connection lost")
-        _connectionStatus.value = ConnectionStatus.Disconnected
-        startForeground(NOTIFICATION_ID, buildForegroundNotification("已断开"))
     }
 
     private fun onConnectFailed(config: BrokerConfig, throwable: Throwable) {
@@ -470,10 +553,20 @@ internal class PushService : LifecycleService() {
             mqttClient = null
         }
         _subscriptions.value = emptySet()
+        _connectionStatus.value = ConnectionStatus.Disconnected
         stopForeground(STOP_FOREGROUND_REMOVE)
-        // 用户主动断开 → 立即清 session，UI 跳转登录页
-        clearSession()
         Log.i(TAG, "Disconnected (manual)")
+    }
+
+    /**
+     * 用户登出：只清除 session，不断开 broker 连接
+     * UI 跳转到登录页后可以立即重新登录
+     */
+    fun logout() {
+        messagesEnabled = false
+        _subscriptions.value = emptySet()
+        clearSession()
+        Log.i(TAG, "Logged out (session cleared)")
     }
 
     fun isConnected(): Boolean = _connectionStatus.value is ConnectionStatus.Connected
@@ -702,7 +795,7 @@ internal class PushService : LifecycleService() {
         Log.d(TAG, "buildMqttClient: host=${config.host}, port=${config.port}, clientId=${config.clientId}")
         Log.d(TAG, "buildMqttClient: quality=$quality, initialDelay=${initialDelay}ms, maxDelay=${maxDelay}s")
 
-        return MqttClient.builder()
+        val client: Mqtt5AsyncClient = MqttClient.builder()
             .identifier(config.clientId)
             .serverHost(config.host)
             .serverPort(config.port)
@@ -711,7 +804,7 @@ internal class PushService : LifecycleService() {
                 .maxDelay(maxDelay, TimeUnit.SECONDS)
                 .applyAutomaticReconnect()
             .useMqttVersion5()
-            // 连接成功监听（首次连接和自动重连）
+            // 连接成功监听
             .addConnectedListener { context ->
                 val state = context.clientConfig.state
                 val isReconnect = !state.isConnected
@@ -721,54 +814,22 @@ internal class PushService : LifecycleService() {
                 }
             }
             // 断开连接监听
-            .addDisconnectedListener { context ->
-                val state = context.clientConfig.state
-                val isServerInitiated = context.source == MqttDisconnectSource.SERVER
-                val isUserInitiated = context.source == MqttDisconnectSource.CLIENT
-
-                Log.w(TAG, "❌ MQTT Disconnected! state=$state, source=${context.source}, isServerInitiated=$isServerInitiated, isUserInitiated=$isUserInitiated")
-
-                lifecycleScope.launch(Dispatchers.Main) {
-                    // 用户主动断开 → 立即清 session，UI 跳转登录页
-                    if (isUserInitiated) {
-                        Log.i(TAG, "User initiated disconnect, clearing session")
-                        clearSession()
-                        return@launch
-                    }
-
-                    // 服务器主动断开 → 计数，超过上限则清 session
-                    if (isServerInitiated) {
-                        serverDisconnectCount++
-                        Log.w(TAG, "Server initiated disconnect #${serverDisconnectCount}/$maxServerDisconnect")
-                        if (serverDisconnectCount >= maxServerDisconnect) {
-                            Log.w(TAG, "Server disconnect exceeded limit, clearing session")
-                            clearSessionAsync()
-                        } else {
-                            _connectionStatus.value = ConnectionStatus.Error("服务器断开连接 (${serverDisconnectCount}/$maxServerDisconnect)")
-                        }
-                        return@launch
-                    }
-
-                    // 其他原因（网络丢失等）→ 检查网络状态
-                    val networkAvailable = networkManager.isNetworkAvailable()
-                    Log.d(TAG, "Network available: $networkAvailable")
-
-                    if (!networkAvailable) {
-                        // 网络不可用 → 等待网络恢复
-                        Log.w(TAG, "Network lost, waiting for recovery")
-                        _connectionStatus.value = ConnectionStatus.Reconnecting
-                    } else if (state.isConnectedOrReconnect) {
-                        // 网络正常，会自动重连
-                        Log.i(TAG, "Network OK, auto reconnect enabled")
-                        _connectionStatus.value = ConnectionStatus.Reconnecting
-                    } else {
-                        // 不会自动重连
-                        Log.w(TAG, "No auto reconnect, connection lost")
-                        _connectionStatus.value = ConnectionStatus.Disconnected
-                    }
-                }
-            }
+            .addDisconnectedListener(_disconnectedListener)
             .buildAsync()
+
+        // 全局消息接收回调（只在新建 client 时注册一次）
+        client.publishes(MqttGlobalPublishFilter.ALL) { publish ->
+            // 消息开关关闭时不处理任何消息
+            if (!messagesEnabled) {
+                Log.d(TAG, "Messages disabled, ignoring: ${publish.topic}")
+                return@publishes
+            }
+            lifecycleScope.launch(Dispatchers.IO) {
+                handleIncomingMessage(publish.topic.toString(), publish)
+            }
+        }
+
+        return client
     }
 
     // ─────────────────────────────────────────────────────────────────────────

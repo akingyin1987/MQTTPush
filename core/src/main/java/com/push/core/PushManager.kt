@@ -9,6 +9,7 @@ import com.push.core.model.DefaultTopicGenerator
 import com.push.core.model.LoginResult
 import com.push.core.model.LogoutResult
 import com.push.core.model.PushConfig
+import com.push.core.model.TopicGenerator
 import com.push.core.model.UserSession
 import com.push.core.proto.UserSessionData
 import com.push.core.service.PushService
@@ -110,6 +111,8 @@ class PushManager private constructor(private val context: Application) {
      * 会先断开旧连接，确保状态干净
      */
     fun connect(config: BrokerConfig) {
+        Log.i(TAG, "connect() called: host=${config.host}, port=${config.port}, clientId=${config.clientId}")
+
         // 先断开旧连接（如果有）
         PushService.getInstance()?.let { service ->
             if (service.isConnected() ||
@@ -121,6 +124,7 @@ class PushManager private constructor(private val context: Application) {
         }
 
         // 发起新连接
+        Log.d(TAG, "connect(): starting PushService with ACTION_CONNECT")
         context.startService(
             android.content.Intent(context, PushService::class.java).apply {
                 action = PushService.ACTION_CONNECT
@@ -219,6 +223,9 @@ class PushManager private constructor(private val context: Application) {
         // 取消所有订阅
         session.subscribedTopics.forEach { unsubscribe(it) }
 
+        // 通知 Service 清除 session（不断开 broker）
+        PushService.getInstance()?.logout()
+
         // 清空 DataStore（重置为默认值 = userId 为空 = 未登录）
         context.userSessionDataStore.updateData {
             UserSessionData.getDefaultInstance()
@@ -299,6 +306,20 @@ class PushManager private constructor(private val context: Application) {
             }
         }
 
+        // 用持久化的 topics 构造一个自定义 TopicGenerator
+        val restoredTopicGenerator = object : TopicGenerator {
+            override fun userSubscribeTopic(userId: String, appId: String) =
+                effectiveTopics.firstOrNull { it.contains("/user/$userId") } ?: generator.userSubscribeTopic(userId, appId)
+            override fun groupSubscribeTopic(groupId: String, appId: String) =
+                effectiveTopics.firstOrNull { it.contains("/group/$groupId") } ?: generator.groupSubscribeTopic(groupId, appId)
+            override fun broadcastSubscribeTopic(appId: String) =
+                effectiveTopics.firstOrNull { it.contains("/broadcast") } ?: generator.broadcastSubscribeTopic(appId)
+            override fun readReceiptTopic(userId: String, appId: String) = generator.readReceiptTopic(userId, appId)
+            override fun userPublishTopic(userId: String, appId: String, type: String) = generator.userPublishTopic(userId, appId, type)
+            override fun groupPublishTopic(groupId: String, appId: String, type: String) = generator.groupPublishTopic(groupId, appId, type)
+            override fun broadcastPublishTopic(appId: String, type: String) = generator.broadcastPublishTopic(appId, type)
+        }
+
         return UserSession(
             userId = userId,
             token = token,
@@ -308,7 +329,7 @@ class PushManager private constructor(private val context: Application) {
             extras = extrasMap.toMap(),
             loginAt = loginAt,
             subscribeBroadcast = subscribeBroadcast,
-
+            topicGenerator = restoredTopicGenerator
         )
     }
 

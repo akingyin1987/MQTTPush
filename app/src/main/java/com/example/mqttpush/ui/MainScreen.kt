@@ -1,6 +1,5 @@
 package com.example.mqttpush.ui
 
-import android.util.Log
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -72,68 +71,35 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.mqttpush.navigation.AppNavHost
 import com.push.core.model.BrokerConfig
 import com.push.core.model.ConnectionStatus
 import com.push.core.viewmodel.PushViewModel
-import com.push.ui.compose.screen.LoginScreen
+import com.push.ui.compose.components.StatusNotificationBar
 import com.push.ui.compose.screen.MessageListScreen
 import com.push.ui.compose.screen.SessionCard
 import kotlinx.coroutines.flow.StateFlow
 
 @Composable
 fun MainScreen(viewModel: PushViewModel = viewModel()) {
-    val connectionStatus by viewModel.connectionStatus.collectAsState()
-    val isLoggedIn by viewModel.isLoggedIn.collectAsState()
-
-    // Debug 日志
-    LaunchedEffect(connectionStatus) {
-        Log.d("MainScreen", "connectionStatus changed: $connectionStatus, isLoggedIn: $isLoggedIn")
-    }
-
-    // 第一步：未连接或错误 → 显示连接配置
-    if (connectionStatus == ConnectionStatus.Disconnected
-        || connectionStatus is ConnectionStatus.Error) {
-        ConnectionSetupScreen(
-            connectionStatus = connectionStatus,
-            onConnect = viewModel::connect
-        )
-        return
-    }
-
-    // SessionCleared：会话已清（用户主动断开 或 服务器断开后耗尽）
-    // → 显示登录页（broker 已连接，可直接登录）
-    if (connectionStatus == ConnectionStatus.SessionCleared) {
-        LoginScreen(
-            viewModel = viewModel,
-            onLoginSuccess = { /* 登录成功自动跳转 */ }
-        )
-        return
-    }
-
-    // 连接中 → 显示加载页
-    if (connectionStatus == ConnectionStatus.Connecting || connectionStatus == ConnectionStatus.Reconnecting) {
-        ConnectingScreen(connectionStatus)
-        return
-    }
-
-    // 第三步：已连接 → 检查登录状态
-    if (!isLoggedIn) {
-        LoginScreen(
-            viewModel = viewModel,
-            onLoginSuccess = { /* 登录成功自动跳转 */ }
-        )
-        return
-    }
-
-    // 第三步：已登录 → 显示主界面
-    MainContent(viewModel = viewModel)
+    AppNavHost(viewModel = viewModel)
 }
 
 /**
  * 连接中页面
  */
 @Composable
-fun ConnectingScreen(status: ConnectionStatus) {
+fun ConnectingScreen(
+    status: ConnectionStatus,
+    onError: () -> Unit = {}
+) {
+    // 收到 Error 状态时自动回调，让导航切回连接页
+    LaunchedEffect(status) {
+        if (status is ConnectionStatus.Error) {
+            onError()
+        }
+    }
+
     Column(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -145,16 +111,28 @@ fun ConnectingScreen(status: ConnectionStatus) {
             when (status) {
                 is ConnectionStatus.Connecting -> "正在连接 Broker..."
                 is ConnectionStatus.Reconnecting -> "正在重连..."
+                is ConnectionStatus.Error -> "连接失败"
                 else -> "连接中..."
             },
-            style = MaterialTheme.typography.titleMedium
+            style = MaterialTheme.typography.titleMedium,
+            color = if (status is ConnectionStatus.Error) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurface
         )
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "请稍候",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-        )
+        if (status is ConnectionStatus.Error) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                status.message,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error.copy(alpha = 0.8f)
+            )
+        } else {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "请稍候",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+            )
+        }
     }
 }
 
@@ -359,7 +337,7 @@ fun ConnectionSetupScreen(
                     Text(
                         // 优先显示本地校验错误，否则显示连接错误
                         showError.ifBlank {
-                            if (isError) "连接失败: ${(connectionStatus as ConnectionStatus.Error).message}"
+                            if (isError) "连接失败: ${connectionStatus.message}"
                             else ""
                         },
                         color = MaterialTheme.colorScheme.error,
@@ -476,6 +454,9 @@ fun MainContent(viewModel: PushViewModel) {
     val currentFilter by viewModel.currentFilter.collectAsState()
     var currentTab by remember { mutableIntStateOf(0) }
 
+    // 获取最新未读消息（用于顶部通知栏）
+    val latestUnread by viewModel.latestUnread.collectAsState()
+
     Scaffold(
         bottomBar = {
             NavigationBar {
@@ -501,6 +482,16 @@ fun MainContent(viewModel: PushViewModel) {
         }
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+
+            // 统一状态通知栏（连接错误 / 消息滚动）
+            StatusNotificationBar(
+                connectionStatus = connectionStatus,
+                unreadMessages = latestUnread,
+                onConnectionBarClick = { currentTab = 1 },
+                onMessageClick = { viewModel.selectMessage(it) },
+                onMessageDismiss = { viewModel.markAsRead(it.id) }
+            )
+
             when (currentTab) {
                 0 -> MessageListScreen(
                     messages = uiState,

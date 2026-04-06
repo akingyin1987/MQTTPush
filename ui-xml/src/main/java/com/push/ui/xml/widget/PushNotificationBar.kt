@@ -21,6 +21,12 @@ import java.util.*
 import androidx.core.content.withStyledAttributes
 import androidx.core.view.isVisible
 import androidx.core.view.isGone
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.findViewTreeLifecycleOwner
+import androidx.lifecycle.asLiveData
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 
 /**
  * XML 版顶部通知条组件
@@ -138,6 +144,26 @@ class PushNotificationBar @JvmOverloads constructor(
         if (autoScroll && messages.size > 1) {
             startAutoScroll(messages.size)
         }
+    }
+
+    /**
+     * 一句话绑定 ViewModel（自动观察最新未读消息）
+     * 
+     * 使用方式：
+     * ```kotlin
+     * binding.notificationBar.bind(viewModel)
+     * ```
+     */
+    fun bind(viewModel: com.push.core.viewmodel.PushViewModel) {
+        val lifecycleOwner = findViewTreeLifecycleOwner() ?: return
+        lifecycleOwner.lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                viewModel.latestUnread.collectLatest { messages ->
+                    setMessages(messages)
+                }
+            }
+        }
+
     }
 
     /**

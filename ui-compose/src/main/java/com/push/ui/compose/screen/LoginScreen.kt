@@ -26,6 +26,7 @@ import com.push.core.viewmodel.PushViewModel
 @Composable
 fun LoginScreen(
     viewModel: PushViewModel,
+    isSessionCleared: Boolean = false,
     onLoginSuccess: ((UserSession) -> Unit)? = null
 ) {
     val connectionStatus by viewModel.connectionStatus.collectAsState()
@@ -37,6 +38,13 @@ fun LoginScreen(
     var subscribeBroadcast by remember { mutableStateOf(true) }
     var errorMsg         by remember { mutableStateOf("") }
     var isLoading        by remember { mutableStateOf(false) }
+
+    // 根据状态决定提示文案
+    val statusHint = if (isSessionCleared) {
+        "会话已清除，请重新登录"
+    } else {
+        null
+    }
 
     // 处理登录结果
     LaunchedEffect(loginResult) {
@@ -80,6 +88,21 @@ fun LoginScreen(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
             )
+        }
+
+        // 会话清除提示（可选）
+        if (statusHint != null) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
+            ) {
+                Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Info, null, tint = MaterialTheme.colorScheme.onTertiaryContainer, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(statusHint, color = MaterialTheme.colorScheme.onTertiaryContainer, fontSize = 13.sp)
+                }
+            }
         }
 
         // 连接状态
@@ -149,7 +172,7 @@ fun LoginScreen(
         Button(
             onClick = {
                 if (userId.isBlank()) { errorMsg = "用户 ID 不能为空"; return@Button }
-                if (connectionStatus !is   ConnectionStatus.Connected) { errorMsg = "请先连接 MQTT Broker"; return@Button }
+                if (connectionStatus !is ConnectionStatus.Connected && connectionStatus != ConnectionStatus.SessionCleared) { errorMsg = "请先连接 MQTT Broker"; return@Button }
                 isLoading = true
                 val groupIds = groupIdsInput.split(",").map { it.trim() }.filter { it.isNotBlank() }
                 viewModel.login(
@@ -159,7 +182,7 @@ fun LoginScreen(
                 )
             },
             modifier = Modifier.fillMaxWidth().height(52.dp),
-            enabled = !isLoading && connectionStatus is ConnectionStatus.Connected,
+            enabled = !isLoading && (connectionStatus is ConnectionStatus.Connected || connectionStatus == ConnectionStatus.SessionCleared),
             shape = RoundedCornerShape(12.dp)
         ) {
             if (isLoading) {
@@ -249,7 +272,7 @@ private fun ConnectionStatusCard(status: ConnectionStatus) {
         is ConnectionStatus.Reconnecting -> Triple(Color(0xFFFFAB00), Icons.Default.WifiFind,  "正在重连...")
         is ConnectionStatus.Disconnected -> Triple(Color(0xFFFF5252), Icons.Default.WifiOff,   "未连接 Broker，请先连接")
         is ConnectionStatus.Error        -> Triple(Color(0xFFFF5252), Icons.Default.WifiOff,   "连接错误: ${status.message}")
-        is ConnectionStatus.SessionCleared -> Triple(Color(0xFFFFAB00), Icons.Default.WifiOff,  "已清除会话，请重新登录...")
+        is ConnectionStatus.SessionCleared -> Triple(Color(0xFF00C853), Icons.Default.Wifi,    "Broker 已连接，请输入用户 ID 登录")
     }
     Card(
         modifier = Modifier.fillMaxWidth(),
