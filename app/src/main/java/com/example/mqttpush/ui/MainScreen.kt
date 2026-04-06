@@ -337,7 +337,7 @@ fun ConnectionSetupScreen(
                     Text(
                         // 优先显示本地校验错误，否则显示连接错误
                         showError.ifBlank {
-                            if (isError) "连接失败: ${connectionStatus.message}"
+                            if (isError) "连接失败: ${(connectionStatus as? ConnectionStatus.Error)?.message ?: ""}"
                             else ""
                         },
                         color = MaterialTheme.colorScheme.error,
@@ -446,7 +446,10 @@ fun ConnectionStatusIndicator(status: ConnectionStatus) {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainContent(viewModel: PushViewModel) {
+fun MainContent(
+    viewModel: PushViewModel,
+    initialConfig: BrokerConfig? = null
+) {
     val currentSession by viewModel.currentSession.collectAsState()
     val connectionStatus by viewModel.connectionStatus.collectAsState()
     val uiState by viewModel.messages.collectAsState()
@@ -510,6 +513,7 @@ fun MainContent(viewModel: PushViewModel) {
                 1 -> ConnectionScreen(
                     connectionStatus = connectionStatus,
                     currentSession = currentSession,
+                    initialConfig = initialConfig,
                     onConnect = viewModel::connect,
                     onDisconnect = viewModel::disconnect,
                     onLogout = { viewModel.logout() }
@@ -529,15 +533,16 @@ fun MainContent(viewModel: PushViewModel) {
 fun ConnectionScreen(
     connectionStatus: ConnectionStatus,
     currentSession: com.push.core.model.UserSession?,
+    initialConfig: BrokerConfig? = null,
     onConnect: (BrokerConfig) -> Unit,
     onDisconnect: () -> Unit,
     onLogout: () -> Unit
 ) {
-    var host by remember { mutableStateOf("10.0.2.2") }
-    var port by remember { mutableStateOf("1883") }
-    var clientId by remember { mutableStateOf("android-client") }
-    var username by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
+    var host by remember(initialConfig?.host) { mutableStateOf(initialConfig?.host ?: "10.0.2.2") }
+    var port by remember(initialConfig?.port) { mutableStateOf((initialConfig?.port ?: 1883).toString()) }
+    var clientId by remember(initialConfig?.clientId) { mutableStateOf(initialConfig?.clientId ?: "android-client") }
+    var username by remember(initialConfig?.username) { mutableStateOf(initialConfig?.username.orEmpty()) }
+    var password by remember(initialConfig?.password) { mutableStateOf(initialConfig?.password.orEmpty()) }
 
     Column(
         modifier = Modifier
@@ -579,6 +584,18 @@ fun ConnectionScreen(
                     label = { Text("密码（可选）") },
                     visualTransformation = PasswordVisualTransformation(),
                     modifier = Modifier.fillMaxWidth(), singleLine = true)
+            }
+        }
+
+        Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF4CAF50).copy(alpha = 0.08f))) {
+            Row(modifier = Modifier.padding(12.dp)) {
+                Icon(Icons.Default.Info, null, tint = Color(0xFF2E7D32))
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "消息中心已启用持久会话：请保持同一个 Client ID，服务端以 QoS 1/2 发送时，App 重新打开后会自动补收离线消息。",
+                    fontSize = 12.sp,
+                    color = Color.Black.copy(alpha = 0.72f)
+                )
             }
         }
 

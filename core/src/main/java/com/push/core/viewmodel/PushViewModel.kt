@@ -36,6 +36,8 @@ class PushViewModel(application: Application) : AndroidViewModel(application) {
     val isLoggedIn: StateFlow<Boolean> = pushManager.isLoggedIn
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
+    val savedBrokerConfig: StateFlow<BrokerConfig?> = pushManager.savedBrokerConfig
+
     // ==================== 消息状态 ====================
 
     private val _messages = MutableStateFlow<List<PushMessage>>(emptyList())
@@ -103,6 +105,14 @@ class PushViewModel(application: Application) : AndroidViewModel(application) {
 
     fun connect(config: BrokerConfig) {
         pushManager.connect(config)
+    }
+
+    fun restoreConnectionIfNeeded() {
+        val session = currentSession.value ?: return
+        val config = savedBrokerConfig.value ?: return
+        if (connectionStatus.value == ConnectionStatus.Disconnected) {
+            pushManager.connect(config)
+        }
     }
 
     fun disconnect() {

@@ -1,6 +1,12 @@
 package com.example.mqttpush.navigation
 
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
@@ -8,16 +14,13 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
-import com.example.mqttpush.ui.*
+import com.example.mqttpush.ui.ConnectingScreen
+import com.example.mqttpush.ui.ConnectionScreen
+import com.example.mqttpush.ui.MainContent
 import com.push.core.model.ConnectionStatus
 import com.push.core.viewmodel.PushViewModel
 import com.push.ui.compose.screen.LoginScreen
 
-/**
- * 应用导航图
- * 
- * 根据连接状态和登录状态自动路由到对应页面
- */
 @Composable
 fun AppNavHost(
     modifier: Modifier = Modifier,
@@ -28,15 +31,32 @@ fun AppNavHost(
     val connectionStatus by viewModel.connectionStatus.collectAsState()
     val isLoggedIn by viewModel.isLoggedIn.collectAsState()
     val session by viewModel.currentSession.collectAsState()
+    val savedBrokerConfig by viewModel.savedBrokerConfig.collectAsState()
 
-    // 自动路由：状态变化时自动导航到对应页面
-    LaunchedEffect(connectionStatus, isLoggedIn) {
+    // 记录上一次导航到的路由，避免重复导航
+    var lastRoute by remember { mutableStateOf<String?>(null) }
+    var hasAttemptedAutoRestore by remember { mutableStateOf(false) }
+
+    LaunchedEffect(session, savedBrokerConfig) {
+        if (session == null || savedBrokerConfig == null) {
+            hasAttemptedAutoRestore = false
+        }
+    }
+
+    LaunchedEffect(connectionStatus, session, savedBrokerConfig, hasAttemptedAutoRestore) {
+        if (!hasAttemptedAutoRestore && session != null && savedBrokerConfig != null && connectionStatus == ConnectionStatus.Disconnected) {
+            hasAttemptedAutoRestore = true
+            viewModel.restoreConnectionIfNeeded()
+        }
+    }
+
+    // 监听连接状态和登录状态变化，触发路由导航
+    LaunchedEffect(connectionStatus, isLoggedIn, session) {
         val target = resolveRoute(connectionStatus, isLoggedIn, session)
-        // 只在当前路由与目标路由不同时导航
-        val current = navController.currentDestination?.route
-        if (current != target.routeName()) {
+        val targetName = target.routeName()
+        if (lastRoute != targetName) {
+            lastRoute = targetName
             navController.navigate(target) {
-                // 清空 back stack，避免回退到错误状态
                 popUpTo(0) { inclusive = true }
             }
         }
@@ -47,41 +67,43 @@ fun AppNavHost(
         startDestination = Route.Connect,
         modifier = modifier
     ) {
-        // 连接配置页
         composable<Route.Connect> {
-            ConnectionSetupScreen(
+            ConnectionScreen(
                 connectionStatus = connectionStatus,
-                onConnect = viewModel::connect
-            )
-        }
-
-        // 登录页
-        composable<Route.Login> { backStackEntry ->
-            val route = backStackEntry.toRoute<Route.Login>()
-            LoginScreen(
-                viewModel = viewModel,
-                isSessionCleared = route.isSessionCleared,
-                onLoginSuccess = { session ->
-                    // 登录成功 → 导航到主内容页
-                    navController.navigate(Route.Main(
-                        userId = session.userId,
-                        appId = session.appId
-                    )) {
-                        popUpTo(Route.Connect) { inclusive = false }
+                currentSession = session,
+                initialConfig = savedBrokerConfig,
+                onConnect = viewModel::connect,
+                onLogout = { viewModel.logout() },
+                onDisconnect = {
+                    navController.navigate(Route.Connect) {
+                        popUpTo(0) { inclusive = true }
                     }
                 }
             )
         }
 
-        // 连接中加载页
+        composable<Route.Login> { backStackEntry ->
+            val route = backStackEntry.toRoute<Route.Login>()
+            LoginScreen(
+                viewModel = viewModel,
+
+                isSessionCleared = route.isSessionCleared,
+                onLoginSuccess = { s ->
+                    navController.navigate(Route.Main(
+                        userId = s.userId,
+                        appId = s.appId
+                    )) {
+                        popUpTo(Route.Connect) { inclusive = false }
+                    }
+                },
+
+            )
+        }
+
         composable<Route.Connecting> { backStackEntry ->
             val route = backStackEntry.toRoute<Route.Connecting>()
             ConnectingScreen(
-                status = if (route.isReconnect) {
-                    ConnectionStatus.Reconnecting
-                } else {
-                    ConnectionStatus.Connecting
-                },
+                status = if (route.isReconnect) ConnectionStatus.Reconnecting else ConnectionStatus.Connecting,
                 onError = {
                     navController.navigate(Route.Connect) {
                         popUpTo(0) { inclusive = true }
@@ -90,16 +112,15 @@ fun AppNavHost(
             )
         }
 
-        // 主内容页
         composable<Route.Main> {
-            MainContent(viewModel)
+            MainContent(
+                viewModel = viewModel,
+                initialConfig = savedBrokerConfig
+            )
         }
     }
 }
 
-/**
- * 获取路由名称（用于比较）
- */
 private fun Route.routeName(): String = when (this) {
     is Route.Connect -> "Connect"
     is Route.Login -> "Login"

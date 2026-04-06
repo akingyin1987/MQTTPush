@@ -15,4 +15,12 @@ message UserSessionData {
     int64  token_expires_at    = 7;   // token 过期时间戳（ms）
     string app_id              = 8;   // 应用标识，用于主题前缀
     repeated string subscribed_topics = 9;  // 已订阅的主题列表（持久化，重连后恢复）
+
+    string broker_host         = 10;  // 最近一次成功/手动连接的 Broker Host
+    int32  broker_port         = 11;  // 最近一次连接的 Broker Port
+    string broker_client_id    = 12;  // 持久会话依赖的稳定 Client ID
+    string broker_username     = 13;  // 最近一次连接使用的用户名
+    string broker_password     = 14;  // 最近一次连接使用的密码
+    bool   broker_clean_session = 15; // 是否使用 clean session / clean start
+    int32  broker_session_expiry_seconds = 16; // 持久会话保留时长（秒）
 }

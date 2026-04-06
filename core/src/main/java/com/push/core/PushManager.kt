@@ -95,6 +95,11 @@ class PushManager private constructor(private val context: Application) {
         .map { it != null }
         .stateIn(scope, SharingStarted.Eagerly, false)
 
+    /** 最近一次保存的 Broker 配置，用于下次启动自动恢复连接。 */
+    val savedBrokerConfig: StateFlow<BrokerConfig?> = context.userSessionDataStore.data
+        .map { proto -> proto.toBrokerConfig() }
+        .stateIn(scope, SharingStarted.Eagerly, null)
+
     // ==================== 连接状态 ====================
 
     // 直接暴露 PushService 的 connectionStatus（实时，无轮询）
@@ -107,24 +112,41 @@ class PushManager private constructor(private val context: Application) {
     // ==================== 连接管理 ====================
 
     /**
-     * 连接 MQTT Broker
-     * 会先断开旧连接，确保状态干净
+     * 连接 MQTT Broker。
+     *
+     * **重要**：如果当前已经连接，且传入的 config 与当前 config 相同，
+     * 则直接跳过，不做任何操作，避免每次进入 App 都重新连接。
+     * 只有以下情况才真正发起连接：
+     * - 当前处于 Disconnected / Error 状态
+     * - Broker 配置发生变化（host / port / clientId 不同）
      */
     fun connect(config: BrokerConfig) {
-        Log.i(TAG, "connect() called: host=${config.host}, port=${config.port}, clientId=${config.clientId}")
+        val service = PushService.getInstance()
+        if (service != null) {
+            val currentStatus = service.connectionStatus.value
+            val sameConfig = service.currentConfig.value?.let {
+                it.host == config.host && it.port == config.port && it.clientId == config.clientId
+            } ?: false
 
-        // 先断开旧连接（如果有）
-        PushService.getInstance()?.let { service ->
-            if (service.isConnected() ||
-                service.connectionStatus.value == ConnectionStatus.Connecting ||
-                service.connectionStatus.value == ConnectionStatus.Reconnecting) {
-                Log.d(TAG, "connect(): disconnecting old connection first")
+            if (sameConfig && (currentStatus is ConnectionStatus.Connected
+                    || currentStatus == ConnectionStatus.Connecting
+                    || currentStatus == ConnectionStatus.Reconnecting)) {
+                Log.i(TAG, "connect(): already connected/connecting with same config, skip reconnect")
+                return
+            }
+
+            // config 变化时才断开旧连接
+            if (!sameConfig && (currentStatus is ConnectionStatus.Connected
+                    || currentStatus == ConnectionStatus.Connecting)) {
+                Log.d(TAG, "connect(): config changed, disconnecting old connection first")
                 service.disconnect()
             }
         }
 
-        // 发起新连接
-        Log.d(TAG, "connect(): starting PushService with ACTION_CONNECT")
+        Log.i(TAG, "connect() called: host=${config.host}, port=${config.port}, clientId=${config.clientId}")
+        scope.launch {
+            persistBrokerConfig(config)
+        }
         context.startService(
             android.content.Intent(context, PushService::class.java).apply {
                 action = PushService.ACTION_CONNECT
@@ -139,6 +161,20 @@ class PushManager private constructor(private val context: Application) {
                 action = PushService.ACTION_DISCONNECT
             }
         )
+    }
+
+    private suspend fun persistBrokerConfig(config: BrokerConfig) {
+        context.userSessionDataStore.updateData { current ->
+            current.toBuilder()
+                .setBrokerHost(config.host)
+                .setBrokerPort(config.port)
+                .setBrokerClientId(config.clientId)
+                .setBrokerUsername(config.username.orEmpty())
+                .setBrokerPassword(config.password.orEmpty())
+                .setBrokerCleanSession(config.cleanSession)
+                .setBrokerSessionExpirySeconds(config.sessionExpirySeconds)
+                .build()
+        }
     }
 
     // ==================== 登录 ====================
@@ -201,7 +237,16 @@ class PushManager private constructor(private val context: Application) {
         }
 
         // 订阅专属主题
-        session.subscribedTopics.forEach { subscribe(it, qos = 1) }
+        // 注意：如果 Service 此时还没连接好，subscribe() 会被跳过
+        // 所以我们把 topics 也持久化到了 DataStore，连接成功后 PushService 会调用
+        // restoreSubscriptions() → 再通过 notifyManagerRestoreSubscriptions() 补回来
+        val service = PushService.getInstance()
+        if (service?.isConnected() == true) {
+            session.subscribedTopics.forEach { subscribe(it, qos = 1) }
+            Log.i(TAG, "login: subscribed ${session.subscribedTopics.size} topics immediately (connected)")
+        } else {
+            Log.w(TAG, "login: Service not connected yet, topics saved to DataStore, will subscribe on connect")
+        }
 
         Log.i(TAG, "Login success: userId=$userId, appId=$effectiveAppId, topics=${session.subscribedTopics.size}")
         return LoginResult.Success(session)
@@ -237,11 +282,24 @@ class PushManager private constructor(private val context: Application) {
     // ==================== 重连恢复 ====================
 
     /**
-     * MQTT 重连成功后调用，恢复订阅
-     * 建议在 PushService 连接成功回调中调用
+     * MQTT 连接/重连成功后调用，从当前会话恢复订阅。
+     *
+     * 调用场景：
+     * - 首次连接成功（Service 内存里还没有任何订阅记录）
+     * - 重连后（clean session 导致 broker 端订阅清除）
+     *
+     * 如果 `currentSession` 还没有值（DataStore 尚未完成初始化），
+     * 则直接跳过，等下次连接事件时重试。
      */
     fun restoreSubscriptions() {
-        currentSession.value?.subscribedTopics?.forEach { subscribe(it, qos = 1) }
+        val session = currentSession.value
+        if (session == null) {
+            Log.w(TAG, "restoreSubscriptions: no session yet, skip")
+            return
+        }
+        val topics = session.subscribedTopics
+        Log.i(TAG, "restoreSubscriptions: restoring ${topics.size} topics for user=${session.userId}")
+        topics.forEach { subscribe(it, qos = 1) }
     }
 
     // ==================== 订阅 / 发布 ====================
@@ -330,6 +388,19 @@ class PushManager private constructor(private val context: Application) {
             loginAt = loginAt,
             subscribeBroadcast = subscribeBroadcast,
             topicGenerator = restoredTopicGenerator
+        )
+    }
+
+    private fun UserSessionData.toBrokerConfig(): BrokerConfig? {
+        if (brokerHost.isBlank() || brokerPort <= 0 || brokerClientId.isBlank()) return null
+        return BrokerConfig(
+            host = brokerHost,
+            port = brokerPort,
+            clientId = brokerClientId,
+            username = brokerUsername.takeIf { it.isNotBlank() },
+            password = brokerPassword.takeIf { it.isNotBlank() },
+            cleanSession = brokerCleanSession,
+            sessionExpirySeconds = brokerSessionExpirySeconds.takeIf { it > 0 } ?: BrokerConfig().sessionExpirySeconds
         )
     }
 

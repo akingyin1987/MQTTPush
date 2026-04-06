@@ -17,7 +17,9 @@ import com.hivemq.client.mqtt.datatypes.MqttTopic
 import com.hivemq.client.mqtt.lifecycle.MqttClientDisconnectedListener
 import com.hivemq.client.mqtt.lifecycle.MqttDisconnectSource
 import com.hivemq.client.mqtt.mqtt5.Mqtt5AsyncClient
+import com.hivemq.client.mqtt.mqtt5.lifecycle.Mqtt5ClientConnectedContext
 import com.hivemq.client.mqtt.mqtt5.message.publish.Mqtt5Publish
+
 import com.push.core.MessageQueue
 import com.push.core.NetworkManager
 import com.push.core.NetworkQuality
@@ -420,11 +422,13 @@ internal class PushService : LifecycleService() {
             val keepAlive = adjustKeepAlive(config.keepAliveInterval, snapshot.quality)
             Log.d(TAG, "Adjusted keepAlive: ${keepAlive}s")
 
-            Log.d(TAG, "Starting MQTT connectWith()...")
+            val sessionExpirySeconds = if (config.cleanSession) 0 else config.sessionExpirySeconds.coerceAtLeast(60)
+            Log.d(TAG, "Starting MQTT connectWith()... cleanSession=${config.cleanSession}, sessionExpirySeconds=$sessionExpirySeconds")
             mqttClient!!.connectWith()
                 .cleanStart(config.cleanSession)
-                .sessionExpiryInterval(0)
+                .sessionExpiryInterval(sessionExpirySeconds.toLong())
                 .keepAlive(keepAlive)
+
                 .simpleAuth().username(config.username.orEmpty())
                 .password(config.password?.toByteArray() ?: ByteArray(0))
                 .applySimpleAuth()
@@ -482,8 +486,11 @@ internal class PushService : LifecycleService() {
         _connectionStatus.value = ConnectionStatus.SessionCleared
     }
 
-    private fun onConnectSuccess(isReconnect: Boolean = false) {
-        Log.i(TAG, "onConnectSuccess: isReconnect=$isReconnect")
+    private fun onConnectSuccess(
+        isReconnect: Boolean = false,
+        sessionPresent: Boolean = false
+    ) {
+        Log.i(TAG, "onConnectSuccess: isReconnect=$isReconnect, sessionPresent=$sessionPresent")
         serverDisconnectCount = 0
 
         val config = _currentConfig.value
@@ -500,17 +507,77 @@ internal class PushService : LifecycleService() {
         reconnectAttempts = 0
         reconnectJob?.cancel()
 
-        // 只有首次连接才恢复订阅（重连时订阅还在）
-        if (!isReconnect) {
-            restoreSubscriptions()
+        // 开启消息接收（必须在 restoreSubscriptions 之前，否则订阅成功后消息会被丢弃）
+        messagesEnabled = true
+
+        if (_subscriptions.value.isEmpty()) {
+            hydrateSubscriptionsFromSession()
         }
 
-        // 开启消息接收
-        messagesEnabled = true
+        val shouldRestoreSubscriptions = config?.cleanSession == true || !sessionPresent
+
+        when {
+            shouldRestoreSubscriptions -> {
+                restoreSubscriptions()
+                Log.i(
+                    TAG,
+                    "Restoring subscriptions because cleanSession=${config?.cleanSession} or sessionPresent=$sessionPresent (${_subscriptions.value.size} in memory)"
+                )
+                if (_subscriptions.value.isEmpty()) {
+                    notifyManagerRestoreSubscriptions()
+                }
+            }
+            _subscriptions.value.isEmpty() -> {
+                Log.i(TAG, "Broker session exists but local subscriptions are empty, asking PushManager to hydrate them")
+                notifyManagerRestoreSubscriptions()
+            }
+            isReconnect -> {
+                Log.i(TAG, "Reconnect with persisted broker session, skip re-subscribe")
+            }
+            else -> {
+                Log.i(TAG, "Connected with persisted broker session, waiting for broker to deliver queued messages")
+            }
+        }
+
 
         startForeground(NOTIFICATION_ID, buildForegroundNotification("已连接"))
         config?.let { MqttReconnectWorker.cancel(applicationContext) }
     }
+
+
+    /**
+     * 仅把订阅列表从当前会话补到 Service 内存，不主动向 broker 再次发送 SUBSCRIBE。
+     * 持久会话恢复时 broker 已保留订阅，但客户端本地状态仍然需要补齐，供 UI 和通知判断使用。
+     */
+    private fun hydrateSubscriptionsFromSession() {
+        try {
+            val topics = PushManager.getInstance(application)
+                .currentSession.value
+                ?.subscribedTopics
+                ?.toSet()
+                .orEmpty()
+            if (topics.isNotEmpty()) {
+                _subscriptions.value = topics
+                Log.i(TAG, "Hydrated ${topics.size} subscriptions from session")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "hydrateSubscriptionsFromSession failed: ${e.message}")
+        }
+    }
+
+    /**
+     * 通知 PushManager 恢复会话订阅。
+     * 当 Service 重启或首次连接时内存里没有订阅记录，需要从 DataStore 中的会话补全。
+     */
+    private fun notifyManagerRestoreSubscriptions() {
+        try {
+            PushManager.getInstance(application).restoreSubscriptions()
+            Log.i(TAG, "notifyManagerRestoreSubscriptions: asked PushManager to restore")
+        } catch (e: Exception) {
+            Log.w(TAG, "notifyManagerRestoreSubscriptions failed: ${e.message}")
+        }
+    }
+
 
     private fun onConnectFailed(config: BrokerConfig, throwable: Throwable) {
         Log.w(TAG, "MQTT connect failed: ${throwable.message}")
@@ -795,6 +862,9 @@ internal class PushService : LifecycleService() {
         Log.d(TAG, "buildMqttClient: host=${config.host}, port=${config.port}, clientId=${config.clientId}")
         Log.d(TAG, "buildMqttClient: quality=$quality, initialDelay=${initialDelay}ms, maxDelay=${maxDelay}s")
 
+        // 标记是否已经完成过首次连接（新建 client 时默认 false）
+        var hasEverConnected = false
+
         val client: Mqtt5AsyncClient = MqttClient.builder()
             .identifier(config.clientId)
             .serverHost(config.host)
@@ -807,12 +877,24 @@ internal class PushService : LifecycleService() {
             // 连接成功监听
             .addConnectedListener { context ->
                 val state = context.clientConfig.state
-                val isReconnect = !state.isConnected
-                Log.i(TAG, "✅ MQTT Connected! state=$state, isReconnect=$isReconnect")
+                val sessionPresent = (context as? Mqtt5ClientConnectedContext)
+                    ?.getConnAck()
+                    ?.isSessionPresent
+                    ?: false
+                // hasEverConnected == false → 首次连接
+
+                // hasEverConnected == true  → 断线重连
+                val isReconnect = hasEverConnected
+                hasEverConnected = true
+                Log.i(TAG, "✅ MQTT Connected! state=$state, isReconnect=$isReconnect, sessionPresent=$sessionPresent")
                 lifecycleScope.launch(Dispatchers.Main) {
-                    onConnectSuccess(isReconnect = isReconnect)
+                    onConnectSuccess(
+                        isReconnect = isReconnect,
+                        sessionPresent = sessionPresent
+                    )
                 }
             }
+
             // 断开连接监听
             .addDisconnectedListener(_disconnectedListener)
             .buildAsync()
@@ -873,22 +955,21 @@ internal class PushService : LifecycleService() {
         if (hashIdx != -1 && (hashIdx != topic.length - 1 || (hashIdx > 0 && topic[hashIdx - 1] != '/'))) {
             return false
         }
-        // + 不能在首尾层级（+ 前后必须是 /）
+        // 逐级检查通配符合法性
         val parts = topic.split('/')
-        for (part in parts) {
+        for ((index, part) in parts.withIndex()) {
             if (part.isEmpty()) continue
-            if (part == "+") {
-                // + 单独成一级是合法的
+            if (part == "+") continue  // + 单独成一级，合法
+            if (part == "#") {
+                // # 只能出现在最后一级
+                if (index != parts.lastIndex) return false
                 continue
             }
+            // 普通层级里不能混入通配符
             if (part.contains('#') || part.contains('+')) {
                 return false
             }
         }
-        // 主题不能以 + 或 # 结尾（除非 # 合法地在末尾）
-        val lastPart = parts.lastOrNull() ?: return false
-        if (lastPart == "+") return false
-        if (lastPart.contains('+') && !topic.endsWith("/#")) return false
 
         return true
     }

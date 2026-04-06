@@ -123,8 +123,10 @@ data class BrokerConfig(
     val isWebSocket: Boolean = false,
     /** WebSocket 路径，仅 WebSocket 场景生效。 */
     val webSocketPath: String = "/mqtt",
-    /** 是否使用 clean session / clean start 语义。 */
-    val cleanSession: Boolean = true,
+    /** 是否使用 clean session / clean start 语义。消息中心默认关闭，以支持离线消息补收。 */
+    val cleanSession: Boolean = false,
+    /** 持久会话保留时长（秒）。cleanSession=false 时 broker 会在这段时间内缓存离线 QoS1/QoS2 消息。 */
+    val sessionExpirySeconds: Int = 7 * 24 * 60 * 60,
     /** KeepAlive 心跳间隔（秒）。 */
     val keepAliveInterval: Int = 60,
     /** 是否允许客户端自动重连。 */

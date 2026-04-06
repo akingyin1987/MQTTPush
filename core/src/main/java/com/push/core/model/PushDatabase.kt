@@ -104,6 +104,10 @@ interface MessageDao {
     @Query("SELECT * FROM push_messages WHERE id = :id")
     suspend fun getById(id: Long): PushMessage?
 
+    /** 按服务端消息 ID 查重，避免 QoS1 重投或离线补发导致重复入库。 */
+    @Query("SELECT * FROM push_messages WHERE messageId = :messageId LIMIT 1")
+    suspend fun getByMessageId(messageId: String): PushMessage?
+
     /** 获取未读消息列表（非 Flow，用于批量处理） */
     @Query("SELECT * FROM push_messages WHERE isRead = 0")
     suspend fun getUnreadMessagesList(): List<PushMessage>

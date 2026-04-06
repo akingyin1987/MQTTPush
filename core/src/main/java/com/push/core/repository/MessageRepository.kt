@@ -48,8 +48,23 @@ class MessageRepository private constructor(
 
     // ==================== 消息操作 ====================
 
-    suspend fun insert(message: PushMessage): Long = dao.insert(message)
-    suspend fun insertAll(messages: List<PushMessage>) = dao.insertAll(messages)
+    suspend fun insert(message: PushMessage): Long {
+        if (message.messageId.isNotBlank()) {
+            dao.getByMessageId(message.messageId)?.let { existing ->
+                return existing.id
+            }
+        }
+        return dao.insert(message)
+    }
+
+    suspend fun insertAll(messages: List<PushMessage>) {
+        val deduplicated = messages.filterNot { msg ->
+            msg.messageId.isNotBlank() && dao.getByMessageId(msg.messageId) != null
+        }
+        if (deduplicated.isNotEmpty()) {
+            dao.insertAll(deduplicated)
+        }
+    }
 
     /**
      * 标记已读 + 同步回执到服务端
