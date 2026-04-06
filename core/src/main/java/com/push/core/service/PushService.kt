@@ -413,11 +413,14 @@ internal class PushService : LifecycleService() {
             Log.d(TAG, "Network snapshot: state=${snapshot.state}, quality=${snapshot.quality}")
 
             // 网络不可用时立即报错，不等 MQTT 超时
-            if (!networkManager.isNetworkAvailable()) {
+            if (!snapshot.isAvailable) {
                 Log.w(TAG, "Network unavailable, aborting connect")
-                _connectionStatus.value = ConnectionStatus.Error("网络不可用，请检查网络连接")
+                _connectionStatus.value = ConnectionStatus.Error(
+                    "当前没有可用网络，请检查 Wi‑Fi / 移动网络，或打开系统网络设置后重试"
+                )
                 return
             }
+
 
             val keepAlive = adjustKeepAlive(config.keepAliveInterval, snapshot.quality)
             Log.d(TAG, "Adjusted keepAlive: ${keepAlive}s")

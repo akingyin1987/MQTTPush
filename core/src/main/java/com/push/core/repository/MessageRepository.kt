@@ -105,6 +105,16 @@ class MessageRepository private constructor(
         dao.markAllAsRead()
     }
 
+    /** 标记为未读（仅更新本地状态，不回传服务端）。 */
+    suspend fun markAsUnread(id: Long) {
+        dao.markAsUnread(id)
+    }
+
+    /** 批量标记为未读（仅更新本地状态，不回传服务端）。 */
+    suspend fun markAsUnread(ids: List<Long>) {
+        dao.markAsUnread(ids)
+    }
+
     /**
      * 同步已读回执到服务端
      * 主题：由 session.readReceiptTopic 动态生成

@@ -43,7 +43,13 @@ interface MessageDao {
         WHERE (:isRead IS NULL OR isRead = :isRead)
         AND (:type IS NULL OR type = :type)
         AND (:topic IS NULL OR topic LIKE :topic || '%')
-        AND (:keyword IS NULL OR payload LIKE '%' || :keyword || '%' OR title LIKE '%' || :keyword || '%')
+        AND (
+            :keyword IS NULL OR
+            payload LIKE '%' || :keyword || '%' OR
+            title LIKE '%' || :keyword || '%' OR
+            content LIKE '%' || :keyword || '%' OR
+            contentUrl LIKE '%' || :keyword || '%'
+        )
         ORDER BY receivedAt DESC
         LIMIT :limit OFFSET :offset
     """)
@@ -79,6 +85,14 @@ interface MessageDao {
     /** 全部标记为已读。 */
     @Query("UPDATE push_messages SET isRead = 1")
     suspend fun markAllAsRead()
+
+    /** 将单条消息标记为未读。 */
+    @Query("UPDATE push_messages SET isRead = 0, isReadSynced = 0 WHERE id = :id")
+    suspend fun markAsUnread(id: Long)
+
+    /** 批量标记为未读。 */
+    @Query("UPDATE push_messages SET isRead = 0, isReadSynced = 0 WHERE id IN (:ids)")
+    suspend fun markAsUnread(ids: List<Long>)
 
     /** 切换星标状态。 */
     @Query("UPDATE push_messages SET isStarred = NOT isStarred WHERE id = :id")
@@ -127,7 +141,7 @@ interface MessageDao {
  */
 @Database(
     entities = [PushMessage::class],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class PushDatabase : RoomDatabase() {

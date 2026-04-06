@@ -52,6 +52,9 @@ class PushViewModel(application: Application) : AndroidViewModel(application) {
     private val _currentFilter = MutableStateFlow(MessageFilter())
     val currentFilter: StateFlow<MessageFilter> = _currentFilter.asStateFlow()
 
+    private val _selectedMessageId = MutableStateFlow<Long?>(null)
+    val selectedMessageId: StateFlow<Long?> = _selectedMessageId.asStateFlow()
+
     init {
         viewModelScope.launch {
             repository.getMessages(limit = 100).collect { list ->
@@ -143,11 +146,20 @@ class PushViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectMessage(message: PushMessage?) {
+        _selectedMessageId.value = message?.id
         message?.let { markAsRead(it.id) }
+    }
+
+    fun clearSelectedMessage() {
+        _selectedMessageId.value = null
     }
 
     fun markAsRead(id: Long) {
         viewModelScope.launch { repository.markAsRead(id) }
+    }
+
+    fun markAsUnread(id: Long) {
+        viewModelScope.launch { repository.markAsUnread(id) }
     }
 
     fun markAsRead(ids: List<Long>) {

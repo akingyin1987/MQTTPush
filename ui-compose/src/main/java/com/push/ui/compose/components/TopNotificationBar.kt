@@ -182,7 +182,7 @@ private fun NotificationItem(
                 color = MaterialTheme.colorScheme.onPrimaryContainer
             )
             Text(
-                text = message.content.ifBlank { message.payload },
+                text = message.previewContent,
                 style = MaterialTheme.typography.bodySmall,
                 fontSize = 11.sp,
                 maxLines = 1,

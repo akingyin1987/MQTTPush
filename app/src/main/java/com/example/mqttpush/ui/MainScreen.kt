@@ -1,5 +1,9 @@
 package com.example.mqttpush.ui
 
+import android.content.Context
+import android.content.Intent
+import android.os.Build
+import android.provider.Settings
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -34,6 +38,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Numbers
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Subscriptions
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
@@ -63,6 +68,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -76,6 +82,7 @@ import com.push.core.model.BrokerConfig
 import com.push.core.model.ConnectionStatus
 import com.push.core.viewmodel.PushViewModel
 import com.push.ui.compose.components.StatusNotificationBar
+import com.push.ui.compose.screen.MessageDetailDialog
 import com.push.ui.compose.screen.MessageListScreen
 import com.push.ui.compose.screen.SessionCard
 import kotlinx.coroutines.flow.StateFlow
@@ -83,6 +90,23 @@ import kotlinx.coroutines.flow.StateFlow
 @Composable
 fun MainScreen(viewModel: PushViewModel = viewModel()) {
     AppNavHost(viewModel = viewModel)
+}
+
+private fun openNetworkSettings(context: Context) {
+    val intents = buildList {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            add(Intent(Settings.Panel.ACTION_INTERNET_CONNECTIVITY))
+        }
+        add(Intent(Settings.ACTION_WIRELESS_SETTINGS))
+        add(Intent(Settings.ACTION_WIFI_SETTINGS))
+    }
+
+    intents.firstOrNull { intent ->
+        runCatching {
+            context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            true
+        }.getOrDefault(false)
+    }
 }
 
 /**
@@ -145,12 +169,17 @@ fun ConnectionSetupScreen(
     connectionStatus: ConnectionStatus,
     onConnect: (BrokerConfig) -> Unit
 ) {
+    val context = LocalContext.current
     var host by remember { mutableStateOf("10.0.2.2") }
     var port by remember { mutableStateOf("1883") }
     var clientId by remember { mutableStateOf("android-client-${System.currentTimeMillis() % 10000}") }
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var showError by remember { mutableStateOf("") }
+
+    val connectionError = connectionStatus as? ConnectionStatus.Error
+    val effectiveError = showError.ifBlank { connectionError?.message.orEmpty() }
+    val isNetworkError = effectiveError.contains("网络")
 
     // 直接用 connectionStatus 判断状态
     val isConnecting = connectionStatus == ConnectionStatus.Connecting ||
@@ -455,10 +484,12 @@ fun MainContent(
     val uiState by viewModel.messages.collectAsState()
     val unreadCount by viewModel.unreadCount.collectAsState()
     val currentFilter by viewModel.currentFilter.collectAsState()
+    val selectedMessageId by viewModel.selectedMessageId.collectAsState()
     var currentTab by remember { mutableIntStateOf(0) }
 
     // 获取最新未读消息（用于顶部通知栏）
     val latestUnread by viewModel.latestUnread.collectAsState()
+    val selectedMessage = selectedMessageId?.let { id -> uiState.firstOrNull { it.id == id } }
 
     Scaffold(
         bottomBar = {
@@ -504,6 +535,7 @@ fun MainContent(
                     onFilterChange = viewModel::setFilter,
                     onMessageClick = viewModel::selectMessage,
                     onMarkRead = viewModel::markAsRead,
+                    onMarkUnread = viewModel::markAsUnread,
                     onMarkAllRead = viewModel::markAllAsRead,
                     onToggleStar = viewModel::toggleStar,
                     onDelete = viewModel::deleteMessage,
@@ -527,6 +559,20 @@ fun MainContent(
             }
         }
     }
+
+    selectedMessage?.let { message ->
+        MessageDetailDialog(
+            message = message,
+            onDismiss = viewModel::clearSelectedMessage,
+            onMarkRead = { viewModel.markAsRead(message.id) },
+            onMarkUnread = { viewModel.markAsUnread(message.id) },
+            onToggleStar = { viewModel.toggleStar(message.id) },
+            onDelete = {
+                viewModel.deleteMessage(message.id)
+                viewModel.clearSelectedMessage()
+            }
+        )
+    }
 }
 
 @Composable
@@ -538,6 +584,10 @@ fun ConnectionScreen(
     onDisconnect: () -> Unit,
     onLogout: () -> Unit
 ) {
+    val context = LocalContext.current
+    val connectionError = connectionStatus as? ConnectionStatus.Error
+    val isNetworkError = connectionError?.message?.contains("网络") == true
+
     var host by remember(initialConfig?.host) { mutableStateOf(initialConfig?.host ?: "10.0.2.2") }
     var port by remember(initialConfig?.port) { mutableStateOf((initialConfig?.port ?: 1883).toString()) }
     var clientId by remember(initialConfig?.clientId) { mutableStateOf(initialConfig?.clientId ?: "android-client") }
@@ -596,6 +646,51 @@ fun ConnectionScreen(
                     fontSize = 12.sp,
                     color = Color.Black.copy(alpha = 0.72f)
                 )
+            }
+        }
+
+        AnimatedVisibility(visible = connectionError != null) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.85f)
+                )
+            ) {
+                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Default.ErrorOutline,
+                            null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            "连接失败: ${connectionError?.message.orEmpty()}",
+                            color = MaterialTheme.colorScheme.error,
+                            fontSize = 13.sp
+                        )
+                    }
+
+                    if (isNetworkError) {
+                        Button(
+                            onClick = { openNetworkSettings(context) },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.error
+                            ),
+                            shape = MaterialTheme.shapes.small
+                        ) {
+                            Icon(Icons.Default.Settings, null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("打开网络设置")
+                        }
+                        Text(
+                            "如果是模拟器，请先确认模拟器系统网络可用，再回到这里重试连接。",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.85f)
+                        )
+                    }
+                }
             }
         }
 

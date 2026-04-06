@@ -333,7 +333,7 @@ private fun MessageItem(
                     color = colorScheme.onSurface
                 )
                 Text(
-                    text = message.content.ifBlank { message.payload },
+                    text = message.previewContent,
                     fontSize = 12.sp,
                     color = colorScheme.onSurface.copy(alpha = 0.7f),
                     maxLines = 1,

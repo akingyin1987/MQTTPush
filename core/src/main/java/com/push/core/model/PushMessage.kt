@@ -22,6 +22,8 @@ data class PushMessage(
     val sourceApp: String = "mqtt",
     val title: String = "",
     val content: String = "",
+    val contentType: MessageContentType = MessageContentType.TEXT,
+    val contentUrl: String = "",
     val isNotified: Boolean = false,
     val receivedAt: Long = System.currentTimeMillis(),
     val expiresAt: Long = 0,
@@ -31,7 +33,29 @@ data class PushMessage(
 
     /** 已读回执是否已同步到服务端 */
     val isReadSynced: Boolean = false
-)
+) {
+    val displayTitle: String
+        get() = title.ifBlank { topic.substringAfterLast('/').ifBlank { topic } }
+
+    val displayContent: String
+        get() = when (contentType) {
+            MessageContentType.LINK -> content.ifBlank { contentUrl.ifBlank { payload } }
+            else -> content.ifBlank { payload }
+        }
+
+    val previewContent: String
+        get() = when (contentType) {
+            MessageContentType.JSON -> {
+                val firstMeaningfulLine = displayContent
+                    .lineSequence()
+                    .map { it.trim() }
+                    .firstOrNull { it.isNotBlank() && it !in setOf("{", "[", "}", "]") }
+                if (firstMeaningfulLine.isNullOrBlank()) "JSON 内容" else "JSON · $firstMeaningfulLine"
+            }
+            MessageContentType.LINK -> content.ifBlank { contentUrl.ifBlank { payload } }
+            MessageContentType.TEXT -> displayContent
+        }
+}
 
 /**
  * 已读回执（发送给服务端）
@@ -61,6 +85,29 @@ enum class MessageType(val value: String, val displayName: String) {
         /** 从服务端下发的字符串安全映射到本地枚举，未知值自动降级为 [CUSTOM]。 */
         fun fromValue(value: String): MessageType {
             return entries.find { it.value == value } ?: CUSTOM
+        }
+    }
+}
+
+/**
+ * 消息正文的展示类型。
+ *
+ * - [TEXT]：默认纯文本
+ * - [JSON]：结构化 JSON，详情页按代码块展示
+ * - [LINK]：外部链接，详情页支持直接跳转
+ */
+enum class MessageContentType(val value: String, val displayName: String) {
+    TEXT("text", "文本"),
+    JSON("json", "JSON"),
+    LINK("link", "链接");
+
+    companion object {
+        fun fromValue(value: String?): MessageContentType {
+            return when (value?.trim()?.lowercase()) {
+                "json" -> JSON
+                "link", "url", "uri", "href", "链接", "连接" -> LINK
+                else -> TEXT
+            }
         }
     }
 }

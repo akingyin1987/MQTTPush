@@ -1,7 +1,11 @@
 package com.push.ui.compose.screen
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,6 +14,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -54,12 +59,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.push.core.model.ConnectionStatus
+import com.push.core.model.MessageContentType
 import com.push.core.model.MessageFilter
 import com.push.core.model.MessageStatus
 import com.push.core.model.MessageType
@@ -83,6 +90,7 @@ fun MessageListScreen(
     onFilterChange: (MessageFilter) -> Unit,
     onMessageClick: (PushMessage) -> Unit,
     onMarkRead: (Long) -> Unit,
+    onMarkUnread: (Long) -> Unit,
     onMarkAllRead: () -> Unit,
     onToggleStar: (Long) -> Unit,
     onDelete: (Long) -> Unit,
@@ -92,7 +100,6 @@ fun MessageListScreen(
 ) {
     val listState = rememberLazyListState()
     var showFilterSheet by remember { mutableStateOf(false) }
-    var showDetail by remember { mutableStateOf<PushMessage?>(null) }
 
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) listState.animateScrollToItem(0)
@@ -183,6 +190,7 @@ fun MessageListScreen(
                         message = msg,
                         onClick = onMessageClick,
                         onMarkRead = onMarkRead,
+                        onMarkUnread = onMarkUnread,
                         onStar = onToggleStar,
                         onDelete = onDelete
                     )
@@ -200,17 +208,6 @@ fun MessageListScreen(
                 showFilterSheet = false
             },
             onDismiss = { showFilterSheet = false }
-        )
-    }
-
-    // 消息详情弹窗
-    showDetail?.let { msg ->
-        MessageDetailDialog(
-            message = msg,
-            onDismiss = { showDetail = null },
-            onMarkRead = { onMarkRead(msg.id) },
-            onToggleStar = { onToggleStar(msg.id) },
-            onDelete = { onDelete(msg.id); showDetail = null }
         )
     }
 }
@@ -335,21 +332,42 @@ fun MessageDetailDialog(
     message: PushMessage,
     onDismiss: () -> Unit,
     onMarkRead: () -> Unit,
+    onMarkUnread: () -> Unit,
     onToggleStar: () -> Unit,
     onDelete: () -> Unit
 ) {
     val timeFormat = remember { SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()) }
+    val uriHandler = LocalUriHandler.current
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    message.title.ifBlank { message.topic },
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        message.displayTitle,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        DetailTag(text = message.type.displayName, color = when (message.type) {
+                            MessageType.NOTIFICATION -> MaterialTheme.colorScheme.primary
+                            MessageType.ALERT -> Color(0xFFFF5252)
+                            MessageType.SYSTEM -> Color(0xFF7B2FF7)
+                            MessageType.CUSTOM -> Color(0xFFFFD740)
+                        })
+                        DetailTag(text = message.contentType.displayName, color = when (message.contentType) {
+                            MessageContentType.TEXT -> MaterialTheme.colorScheme.outline
+                            MessageContentType.JSON -> Color(0xFF1976D2)
+                            MessageContentType.LINK -> Color(0xFF2E7D32)
+                        })
+                        DetailTag(
+                            text = if (message.isRead) "已读" else "未读",
+                            color = if (message.isRead) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
                 IconButton(onClick = onToggleStar) {
                     Icon(
                         if (message.isStarred) Icons.Default.Star else Icons.Default.StarBorder,
@@ -360,31 +378,95 @@ fun MessageDetailDialog(
             }
         },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row {
-                    Text("主题:", fontWeight = FontWeight.Medium, modifier = Modifier.width(50.dp))
-                    Text(message.topic, fontFamily = FontFamily.Monospace, fontSize = 13.sp)
-                }
-                Row {
-                    Text("类型:", fontWeight = FontWeight.Medium, modifier = Modifier.width(50.dp))
-                    Text(message.type.displayName)
-                }
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 420.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
                 Row {
                     Text("时间:", fontWeight = FontWeight.Medium, modifier = Modifier.width(50.dp))
                     Text(timeFormat.format(Date(message.receivedAt)), fontSize = 13.sp)
                 }
+                Row {
+                    Text("主题:", fontWeight = FontWeight.Medium, modifier = Modifier.width(50.dp))
+                    Text(message.topic, fontFamily = FontFamily.Monospace, fontSize = 13.sp)
+                }
+                if (message.contentType == MessageContentType.LINK && message.contentUrl.isNotBlank()) {
+                    Row {
+                        Text("链接:", fontWeight = FontWeight.Medium, modifier = Modifier.width(50.dp))
+                        Text(
+                            text = message.contentUrl,
+                            color = Color(0xFF1976D2),
+                            fontSize = 13.sp,
+                            fontFamily = FontFamily.Monospace,
+                            modifier = Modifier.clickable { uriHandler.openUri(message.contentUrl) }
+                        )
+                    }
+                }
                 HorizontalDivider()
-                Text("内容:", fontWeight = FontWeight.Medium)
+                Text("内容", fontWeight = FontWeight.Medium)
                 Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
                 ) {
-                    Text(
-                        message.payload,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 13.sp,
-                        modifier = Modifier.padding(12.dp)
-                    )
+                    SelectionContainer {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            when (message.contentType) {
+                                MessageContentType.LINK -> {
+                                    if (message.displayContent.isNotBlank()) {
+                                        Text(
+                                            message.displayContent,
+                                            fontSize = 14.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    if (message.contentUrl.isNotBlank()) {
+                                        Button(onClick = { uriHandler.openUri(message.contentUrl) }) {
+                                            Text("打开链接")
+                                        }
+                                    }
+                                }
+                                MessageContentType.JSON -> {
+                                    Text(
+                                        message.displayContent,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 13.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                MessageContentType.TEXT -> {
+                                    Text(
+                                        message.displayContent,
+                                        fontSize = 14.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                if (message.payload != message.displayContent) {
+                    Text("原始 Payload", fontWeight = FontWeight.Medium)
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                    ) {
+                        SelectionContainer {
+                            Text(
+                                text = message.payload,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 12.sp,
+                                modifier = Modifier.padding(12.dp)
+                            )
+                        }
+                    }
                 }
             }
         },
@@ -396,8 +478,10 @@ fun MessageDetailDialog(
                 TextButton(onClick = { onDelete(); onDismiss() }) {
                     Text("删除", color = MaterialTheme.colorScheme.error)
                 }
-                if (!message.isRead) {
-                    TextButton(onClick = { onMarkRead(); onDismiss() }) { Text("标记已读") }
+                TextButton(onClick = {
+                    if (message.isRead) onMarkUnread() else onMarkRead()
+                }) {
+                    Text(if (message.isRead) "标记未读" else "标记已读")
                 }
             }
         }
@@ -405,4 +489,20 @@ fun MessageDetailDialog(
 }
 
 @Composable
-private fun rememberScrollState() = androidx.compose.foundation.rememberScrollState()
+private fun DetailTag(text: String, color: Color) {
+    Surface(
+        shape = RoundedCornerShape(6.dp),
+        color = color.copy(alpha = 0.12f)
+    ) {
+        Text(
+            text = text,
+            color = color,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+        )
+    }
+}
+
+@Composable
+private fun rememberScrollState() = rememberScrollState()
