@@ -1,7 +1,6 @@
 package com.push.ui.xml.example
 
 import android.os.Bundle
-import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import com.push.core.viewmodel.PushViewModel
 import com.push.ui.xml.databinding.ExampleActivityMainBinding
@@ -17,7 +16,7 @@ class ExampleBusinessActivity : AppCompatActivity() {
     private lateinit var binding: ExampleActivityMainBinding
 
     // 共享 PushViewModel（建议放在 Application 层全局管理）
-    private val viewModel: PushViewModel by viewModels()
+    private val viewModel: PushViewModel by lazy { PushViewModel(application) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

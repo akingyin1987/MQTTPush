@@ -35,7 +35,7 @@ class MessageCenterActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMessageCenterBinding
     private val viewModel: PushViewModel by lazy { PushViewModel(application) }
-    private val adapter = MessageAdapter()
+    private val adapter = MessageListAdapter()
 
     private val timeFormat = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
 
@@ -96,7 +96,7 @@ class MessageCenterActivity : AppCompatActivity() {
 
     // ==================== Adapter ====================
 
-    inner class MessageAdapter : ListAdapter<PushMessage, MessageAdapter.VH>(Diff) {
+    inner class MessageListAdapter : ListAdapter<PushMessage, MessageListAdapter.VH>(Diff) {
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
             val view = LayoutInflater.from(parent.context)
@@ -158,7 +158,7 @@ class MessageCenterActivity : AppCompatActivity() {
             .setTitle(msg.title.ifBlank { msg.topic })
             .setItems(items.toTypedArray()) { _, which ->
                 when (which) {
-                    0 -> if (msg.isRead) viewModel.markAsRead(listOf(msg.id)) else viewModel.markAsRead(msg.id)
+                    0 -> if (msg.isRead) viewModel.markAsUnread(msg.id) else viewModel.markAsRead(msg.id)
                     1 -> viewModel.toggleStar(msg.id)
                     2 -> viewModel.deleteMessage(msg.id)
                 }

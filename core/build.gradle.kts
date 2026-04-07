@@ -4,6 +4,7 @@ plugins {
     alias(libs.plugins.ksp)
     alias(libs.plugins.protobuf)
     alias(libs.plugins.kotlin.parcelize)
+    `maven-publish`
 }
 
 android {
@@ -39,6 +40,55 @@ android {
     sourceSets {
         named("main") {
             java.srcDirs("src/main/proto")
+        }
+    }
+    
+    // 避免资源重复复制警告
+    packaging {
+        resources {
+            excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+    }
+}
+
+// ==================== Maven 发布配置 ====================
+afterEvaluate {
+    publishing {
+        publications {
+            create<MavenPublication>("release") {
+                from(components["release"])
+                
+                groupId = rootProject.extra["publishGroupId"] as String
+                artifactId = "mqtt-push-core"
+                version = rootProject.extra["publishVersion"] as String
+                
+                pom {
+                    name.set("MQTT Push Core")
+                    description.set("MQTT 推送核心模块 - 包含消息管理、连接管理、数据持久化等核心功能")
+                    url.set("https://github.com/akingyin1987/MQTTPush")
+                    
+                    licenses {
+                        license {
+                            name.set("The Apache License, Version 2.0")
+                            url.set("http://www.apache.org/licenses/LICENSE-2.0.txt")
+                        }
+                    }
+                    
+                    developers {
+                        developer {
+                            id.set("developer")
+                            name.set("MQTT Push Team")
+                        }
+                    }
+                }
+            }
+        }
+        
+        repositories {
+            maven {
+                name = "LocalRepo"
+                url = uri(rootProject.extra["publishLocalPath"] as String)
+            }
         }
     }
 }

@@ -24,6 +24,7 @@ import androidx.core.view.isGone
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.findViewTreeLifecycleOwner
 import androidx.lifecycle.asLiveData
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -157,13 +158,12 @@ class PushNotificationBar @JvmOverloads constructor(
     fun bind(viewModel: com.push.core.viewmodel.PushViewModel) {
         val lifecycleOwner = findViewTreeLifecycleOwner() ?: return
         lifecycleOwner.lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            lifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
                 viewModel.latestUnread.collectLatest { messages ->
                     setMessages(messages)
                 }
             }
         }
-
     }
 
     /**
@@ -352,9 +352,4 @@ class PushNotificationBar @JvmOverloads constructor(
     }
 
     // ==================== 样式属性 ====================
-
-    object Styleable {
-        const val autoScroll = android.R.attr.enabled
-        const val scrollInterval = android.R.attr.text
-    }
 }
