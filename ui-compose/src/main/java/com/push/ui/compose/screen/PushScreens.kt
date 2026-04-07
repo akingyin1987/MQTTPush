@@ -255,18 +255,15 @@ fun FilterChips(
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         val tabs = listOf(
-            "全部" to (if (currentFilter.status == MessageStatus.ALL) null else MessageStatus.ALL),
-            "未读(${unreadCount})" to (if (currentFilter.status == MessageStatus.UNREAD) null else MessageStatus.UNREAD),
-            "已读" to (if (currentFilter.status == MessageStatus.READ) null else MessageStatus.READ),
-            "星标" to (if (currentFilter.status == MessageStatus.STARRED) null else MessageStatus.STARRED)
+            "全部" to MessageStatus.ALL,
+            "未读(${unreadCount})" to MessageStatus.UNREAD,
+            "已读" to MessageStatus.READ,
+            "星标" to MessageStatus.STARRED
         )
         tabs.forEach { (label, status) ->
             FilterChip(
-                selected = currentFilter.status == status ||
-                    (status == MessageStatus.ALL && currentFilter.status == MessageStatus.ALL),
-                onClick = {
-                    onFilterChange(currentFilter.copy(status = status ?: MessageStatus.ALL))
-                },
+                selected = currentFilter.status == status,
+                onClick = { onFilterChange(currentFilter.copy(status = status)) },
                 label = { Text(label, fontSize = 13.sp) }
             )
         }
