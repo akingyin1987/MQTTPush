@@ -1,5 +1,8 @@
 package com.push.ui.compose.screen
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -59,6 +62,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -338,6 +342,24 @@ fun MessageDetailDialog(
 ) {
     val timeFormat = remember { SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()) }
     val uriHandler = LocalUriHandler.current
+    val context = LocalContext.current
+    val clipboardManager = remember(context) { context.getSystemService(ClipboardManager::class.java) }
+    var showDeleteConfirm by remember(message.id) { mutableStateOf(false) }
+    var expandJson by remember(message.id) { mutableStateOf(false) }
+    val jsonLines = remember(message.id, message.displayContent) { message.displayContent.lines() }
+    val collapsedJsonContent = remember(message.id, message.displayContent) {
+        if (jsonLines.size > 12) {
+            jsonLines.take(12).joinToString("\n") + "\n…"
+        } else {
+            message.displayContent
+        }
+    }
+
+    fun copyText(label: String, value: String) {
+        if (value.isBlank()) return
+        clipboardManager?.setPrimaryClip(ClipData.newPlainText(label, value))
+        Toast.makeText(context, "${label}已复制", Toast.LENGTH_SHORT).show()
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -405,8 +427,52 @@ fun MessageDetailDialog(
                         )
                     }
                 }
+
                 HorizontalDivider()
-                Text("内容", fontWeight = FontWeight.Medium)
+
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("快捷操作", fontWeight = FontWeight.Medium)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = { copyText("内容", message.displayContent) },
+                            enabled = message.displayContent.isNotBlank(),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("复制内容")
+                        }
+                        if (message.contentType == MessageContentType.LINK && message.contentUrl.isNotBlank()) {
+                            OutlinedButton(
+                                onClick = { copyText("链接", message.contentUrl) },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("复制链接")
+                            }
+                        }
+                    }
+                    if (message.contentType == MessageContentType.LINK && message.contentUrl.isNotBlank()) {
+                        Button(
+                            onClick = { uriHandler.openUri(message.contentUrl) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("打开链接")
+                        }
+                    }
+                }
+
+                HorizontalDivider()
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("内容", fontWeight = FontWeight.Medium)
+                    if (message.contentType == MessageContentType.JSON && jsonLines.size > 12) {
+                        TextButton(onClick = { expandJson = !expandJson }) {
+                            Text(if (expandJson) "收起 JSON" else "展开 JSON")
+                        }
+                    }
+                }
                 Surface(
                     shape = RoundedCornerShape(10.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
@@ -427,15 +493,10 @@ fun MessageDetailDialog(
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
-                                    if (message.contentUrl.isNotBlank()) {
-                                        Button(onClick = { uriHandler.openUri(message.contentUrl) }) {
-                                            Text("打开链接")
-                                        }
-                                    }
                                 }
                                 MessageContentType.JSON -> {
                                     Text(
-                                        message.displayContent,
+                                        if (expandJson) message.displayContent else collapsedJsonContent,
                                         fontFamily = FontFamily.Monospace,
                                         fontSize = 13.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -453,7 +514,16 @@ fun MessageDetailDialog(
                     }
                 }
                 if (message.payload != message.displayContent) {
-                    Text("原始 Payload", fontWeight = FontWeight.Medium)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("原始 Payload", fontWeight = FontWeight.Medium)
+                        TextButton(onClick = { copyText("Payload", message.payload) }) {
+                            Text("复制 Payload")
+                        }
+                    }
                     Surface(
                         shape = RoundedCornerShape(10.dp),
                         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
@@ -475,7 +545,7 @@ fun MessageDetailDialog(
         },
         dismissButton = {
             Row {
-                TextButton(onClick = { onDelete(); onDismiss() }) {
+                TextButton(onClick = { showDeleteConfirm = true }) {
                     Text("删除", color = MaterialTheme.colorScheme.error)
                 }
                 TextButton(onClick = {
@@ -486,6 +556,28 @@ fun MessageDetailDialog(
             }
         }
     )
+
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("确认删除这条消息？") },
+            text = { Text("删除后将无法在本地消息中心恢复。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showDeleteConfirm = false
+                    onDelete()
+                    onDismiss()
+                }) {
+                    Text("确认删除", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
 }
 
 @Composable
@@ -503,6 +595,3 @@ private fun DetailTag(text: String, color: Color) {
         )
     }
 }
-
-@Composable
-private fun rememberScrollState() = rememberScrollState()
