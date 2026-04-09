@@ -37,10 +37,12 @@ interface MessageDao {
     /**
      * 按筛选条件查询消息。
      * 其中 `topic` 采用前缀匹配，适合按业务命名空间过滤。
+     * `isStarred = true` 时只返回星标消息；`null` 时不限制。
      */
     @Query("""
         SELECT * FROM push_messages
         WHERE (:isRead IS NULL OR isRead = :isRead)
+        AND (:isStarred IS NULL OR isStarred = :isStarred)
         AND (:type IS NULL OR type = :type)
         AND (:topic IS NULL OR topic LIKE :topic || '%')
         AND (
@@ -55,6 +57,7 @@ interface MessageDao {
     """)
     fun getMessagesFiltered(
         isRead: Boolean? = null,
+        isStarred: Boolean? = null,
         type: String? = null,
         topic: String? = null,
         keyword: String? = null,

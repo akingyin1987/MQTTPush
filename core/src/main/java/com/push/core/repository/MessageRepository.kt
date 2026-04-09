@@ -35,6 +35,10 @@ class MessageRepository private constructor(
                 MessageStatus.READ -> true
                 else -> null
             },
+            isStarred = when (filter.status) {
+                MessageStatus.STARRED -> true
+                else -> null
+            },
             type = filter.type?.value,
             topic = filter.topic,
             keyword = filter.keyword,
